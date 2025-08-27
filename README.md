@@ -3,12 +3,13 @@ Custom basic C compiler based on flex and bison.
 
 ## Installation
 1. Compile the `lexer.l` file and `parser.y` file:
-windows : 
+
+Windows : 
 ```
 win_flex lexer.l
 win_bison -d parser.y
 ```
-linux : 
+Linux : 
 ```
 flex lexer.l
 bison -d parser.y

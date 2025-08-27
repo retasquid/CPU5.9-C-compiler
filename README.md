@@ -2,7 +2,13 @@
 Custom basic C compiler based on flex and bison.
 
 ## Installation
-1. Compile the lexer.l file and parser.y file: 
+1. Compile the `lexer.l` file and `parser.y` file:
+windows : 
+```
+win_flex lexer.l
+win_bison -d parser.y
+```
+linux : 
 ```
 flex lexer.l
 bison -d parser.y
@@ -21,14 +27,20 @@ gcc -E -P main.c -o main.i
 ```
 ./CcompCPU5 main.i -o main.asm
 ```
+3. Compile in machine code
+
+See my ASM compiler here : https://github.com/retasquid/CPU5-ASM-Compiler
+
 ## Limitations
-The C implemented is very basic with only "short" realy working(int and char are shorts).
-Pointers are not available but I'm working on that, list however is available.
+The C implemented is very basic with only `short` realy working(`int` and `char` are understood`shorts`).
+Pointers and list are available.
 
 The compile process don't have a linker so the file include should have the code in them.
 
-The conditions can't be stacked like "if((i>0)&&(i<10)){}" because of CPU5.9 internal limitation but instead you can combine IFs.
+The conditions operation `&&`, `||` and `!` are not implemented and conditions can't be stacked like `if((i>0)&&(i<10)){}` for now, but instead you can combine IFs. 
 
-For now "*" and "/" output MULT and DIV operations that CPU5.9 can't read so consider replacing them with functions like ""mult(int a, int b)" or "div(int a, int b)"
+However, you can combine expressions like `if((i&1)==mult(4,6)){}`
+
+For now `*` and `/` operations output MULT and DIV code and an error message because the CPU5.9 can't mult or divide. Consider replacing them with functions like `mult(int a, int b)` or `div(int a, int b)`
 
 

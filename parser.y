@@ -9,9 +9,13 @@
 #define SP0 0xc0ff
 
 #define SHORT_TYPE 0
-#define SHORT_ARRAY_TYPE 1
-#define CHAR_TYPE 2
-#define CHAR_ARRAY_TYPE 3
+#define CHAR_TYPE 1
+#define SHORT_PTR_TYPE 2
+#define CHAR_PTR_TYPE 3
+
+#define IF_LOOP 1
+#define WHILE_LOOP 2
+#define FOR_LOOP 3
 
 int yylex(void);
 void yyerror(const char *s);
@@ -24,28 +28,41 @@ typedef struct {
     char name[64];
     int reg;
     int addr;
+    int type;
 } Var;
 
+typedef struct {
+    char name[64];
+    int num_arg;
+    int arg_offset;
+    int ret_type;
+    Var arg[32];
+} Func;
+
 Var vars[VarSpace];
-Var arg[254];
-Var func[4096];
+Func func[4096];
 int var_count = 0;
-int arg_count = 0;
 int func_count = 0;
+int tmp_Arg_cnt = 0;
+int Arg_set = 0;
+int arg_count = 0;
 int tmp_reg = 8; // R8..R14 pour temporaires
 int labelCount = 0; // compteur global pour labels uniques
 int LineCount = 0; // compteur de ligne du code source
-int Arg_set = 0;
+int TMP_pipe = 0;
+char func_pipe[64];
 const char Internal_Reg[11][8] = {"GPI0", "GPI1", "GPO0", "GPO1", "SPI", "CONFSPI", "UART","BAUDL", "BAUDH", "STATUS", "CONFINT"};
 
 
 int test_name(const char *name){
-    for (int i = 0; i < arg_count; i++) {
-          if (strcmp(arg[i].name, name) == 0){
-              yyerror(" Argument already exists with this name");
-            return 1;
-          }
+    for (int i = 0; i < func_count; i++) {
+        for (int j = 0; j < func[i].num_arg; j++) {
+            if (strcmp(func[i].arg[j].name, name) == 0){
+                yyerror(" Argument already exists with this name");
+                return 1;
+            }
         }
+    }
     for (int j = 0; j < var_count; j++) {
         if (strcmp(vars[j].name, name) == 0){
             yyerror(" Variable already exists with this name");
@@ -54,19 +71,12 @@ int test_name(const char *name){
     }
     return 0; // Nom valide, pas de conflit
 }
-
-int get_var_reg(const char *name) {
-    for (int i = 0; i < arg_count; i++) {
-        if (strcmp(arg[i].name, name) == 0) {
-            return arg[i].reg;
+int get_func(const char *name) {
+    for (int i = 0; i < func_count; i++) {
+        if (strcmp(func[i].name, name) == 0) {
+            return i;
         }
     }
-    for (int i = 0; i < var_count; i++) {
-        if (strcmp(vars[i].name, name) == 0) {
-            return vars[i].reg;
-        }
-    }
-    yyerror(" Variable/Argument doesn't exists");
     return 0;
 }
 
@@ -88,24 +98,28 @@ int create_var_reg(const char *name, short type, int byte_lenght) {
         case SHORT_TYPE: // SHORT
             vars[var_count].reg = reg;
             vars[var_count].addr = addr;
+            vars[var_count].type = SHORT_TYPE;
             var_count++;
             return reg;
             break;
-        case SHORT_ARRAY_TYPE: // SHORT []
+        case SHORT_PTR_TYPE: // SHORT []
             vars[var_count].reg = byte_lenght;
             vars[var_count].addr = addr;
+            vars[var_count].type = SHORT_PTR_TYPE;
             var_count+= byte_lenght;
             return reg;
             break;
         case CHAR_TYPE: // CHAR
             vars[var_count].reg = reg;
             vars[var_count].addr = addr;
+            vars[var_count].type = CHAR_TYPE;
             var_count++;
             return reg;
             break;
-        case CHAR_ARRAY_TYPE: // CHAR []
+        case CHAR_PTR_TYPE: // CHAR []
             vars[var_count].reg = byte_lenght;
             vars[var_count].addr = addr;
+            vars[var_count].type = CHAR_PTR_TYPE;
             var_count+= byte_lenght;
             return reg;
             break;
@@ -116,48 +130,48 @@ int create_var_reg(const char *name, short type, int byte_lenght) {
 
 }
 
-int get_var_addr(const char *name) {
-    for (int i = 0; i < arg_count; i++) {
-        if (strcmp(arg[i].name, name) == 0) return arg[i].addr;
-    }
+int get_var_addr(const char *name, const char *func_name) {
     for (int i = 0; i < var_count; i++) {
         if (strcmp(vars[i].name, name) == 0) return vars[i].addr;
+    }
+    int tmp = get_func(func_name);
+    for (int i = 0; i < func[tmp].num_arg; i++) {
+        if (strcmp(func[tmp].arg[i].name, name) == 0) return func[tmp].arg[i].addr;
+    }
+    yyerror(" Variable/Arg doesn't exists");
+    return 0;
+}
+
+int get_var_type(const char *name, const char *func_name) {
+    int tmp = get_func(func_name);
+    for (int i = 0; i < func[tmp].num_arg; i++) {
+        if (strcmp(func[tmp].arg[i].name, name) == 0) return func[tmp].arg[i].type;
+    }
+    for (int i = 0; i < var_count; i++) {
+        if (strcmp(vars[i].name, name) == 0) return vars[i].type;
     }
     yyerror(" Variable doesn't exists");
     return 0;
 }
 
-int create_arg_reg(const char *name) {
+int create_arg_reg(const char *name, int type,  const char *func_name) {
     if(test_name(name)) {
         return 0;
     }
-    int reg = arg_count;
-    int addr = ArgLoc + arg_count;
-    strncpy(arg[arg_count].name, name, sizeof(arg[arg_count].name)-1);
-    arg[arg_count].name[sizeof(arg[arg_count].name)-1] = '\0';
-    arg[arg_count].reg = reg;
-    arg[arg_count].addr = addr;
+    int tmp = get_func(func_name);
+    int reg = func[tmp].num_arg;
+    int addr = func[tmp].arg_offset + func[tmp].num_arg;
+    strncpy(func[tmp].arg[reg].name, name, sizeof(func[tmp].arg[reg].name)-1);
+    func[tmp].arg[reg].name[sizeof(func[tmp].arg[reg].name)-1] = '\0';
+    func[tmp].arg[reg].reg = reg;
+    func[tmp].arg[reg].addr = addr;
+    func[tmp].arg[reg].type = type;
+    func[tmp].num_arg++;
     arg_count++;
     return reg;
 }
 
-void clear_arg(){
-  for(int i=0; i<arg_count; i++){
-    arg[i].name[0] = '\0';
-    arg[i].reg = 0;
-    arg[i].addr = 0;
-  }
-}
 
-int get_func(const char *name) {
-    for (int i = 0; i < func_count; i++) {
-        if (strcmp(func[i].name, name) == 0) {
-            return func[i].reg;
-        }
-    }
-    yyerror(" Function doesn't exists");
-    return 0;
-}
 
 void create_func(const char *name, int num_args) {
     for (int i = 0; i < func_count; i++) {
@@ -169,7 +183,8 @@ void create_func(const char *name, int num_args) {
     int reg = func_count;
     strncpy(func[func_count].name, name, sizeof(func[func_count].name)-1);
     func[func_count].name[sizeof(func[func_count].name)-1] = '\0';
-    func[func_count].reg = num_args;
+    func[func_count].num_arg = num_args;
+    func[func_count].arg_offset = arg_count+ArgLoc;
     func_count++;
 }
 
@@ -183,6 +198,59 @@ int get_reg_addr(const char* name) {
         if (strcmp(name, Internal_Reg[i]) == 0)return i;
     }
     return -1;
+}
+
+void convert_str_intlist(char* list, int* intlist){
+    int strlen_list = strlen(list);
+    char buf[32];
+    int num_cnt = 0;
+    int buf_cnt = 0;
+    for(int i = 0;i<strlen_list;i++){
+        if(list[i]==','){
+            buf[buf_cnt] = '\0';
+            printf("valeur buf :%d",atoi(buf));
+            intlist[num_cnt]=atoi(buf);
+            num_cnt++;
+            buf_cnt=0;
+        }else{
+            buf[buf_cnt]=list[i];
+            buf_cnt++;
+        }
+    }
+    buf[buf_cnt] = '\0';
+    printf("valeur buf :%d",atoi(buf));
+    intlist[num_cnt]=atoi(buf);
+    num_cnt++;
+    intlist[num_cnt]='\0';
+    for(int j = 0;j<num_cnt;j++){
+        printf("\nvaleur intlist[%d] :%d\n", j,intlist[j]);
+    }
+}
+
+int intstrlen(int* intlist){
+    int i=0;
+    while(intlist[i]!='\0')i++;
+    printf("valeur i :%d",i);
+    return i;
+}
+
+int label_stack[255];
+int label_stack_ptr = 0;
+
+int push_label(){
+    label_stack[label_stack_ptr]=labelCount;
+    label_stack_ptr++;
+    labelCount++; 
+    return labelCount-1;
+}
+
+int read_label(){
+    return label_stack[label_stack_ptr-1];
+}
+
+int pop_label(){
+    label_stack_ptr--;
+    return label_stack[label_stack_ptr];
 }
 
 %}
@@ -204,23 +272,27 @@ int get_reg_addr(const char* name) {
 %token GPI0 GPI1 GPO0 GPO1 SPI CONFSPI UART BAUDL BAUDH STATUS CONFINT
 %token LPAREN RPAREN LBRACE RBRACE SEMICOLON COMMA LCOMMENT RCOMMENT LBRACKET RBRACKET QUOTE
 
-%type <reg> expression 
+%type <reg> comparable_expression
+%type <reg> simple_expression
+%type <reg> expression
 %type <str> varname
 %type <str> funcname
 %type <num> While
-%type <num> For
+%type <num> Semicolon
 %type <num> condition
-%type <reg> func_call
+%type <reg> func_call 
+%type <str> func_set
 %type <str> op 
 %type <str> op_symetrical
 %type <num> var_type_list
-%type <num> var_type_var
+%type <num> var_type_var 
+%type <num> var_type_ptr
 %type <num> var_type
-//%type <num> arg_type_list
 %type <num> arg_type_var
-//%type <num> arg_type
+%type <num> arg_type_ptr
+%type <num> arg_type
 %type <str> const_list
-%type <str> list_expression
+%type <num> arguments_declaration
 
 %left BOR
 %left BXOR
@@ -238,8 +310,8 @@ int get_reg_addr(const char* name) {
 op: 
     PLUS { $$ = "ADD"; }
     | MINUS { $$ = "SUB"; }
-    | MUL { $$ = "MUL"; }
-    | DIV { $$ = "DIV"; }
+    | MUL { yyerror("Mult not implemented");$$ = "MUL"; }
+    | DIV { yyerror("Div not implemented");$$ = "DIV"; }
     | SHL { $$ = "SHL"; }
     | SHR { $$ = "SHR"; }
     | BAND { $$ = "AND"; }
@@ -249,7 +321,7 @@ op:
 
 op_symetrical : 
     PLUS { $$ = "ADD"; }
-    | MUL { $$ = "MUL"; }
+    | MUL { yyerror("Mult not implemented");$$ = "MUL"; }
     | BAND { $$ = "AND"; }
     | BOR { $$ = "OR"; }
     | BXOR { $$ = "XOR"; }
@@ -257,37 +329,40 @@ op_symetrical :
 
 var_type_list:
     SHORT varname LBRACKET NUMBER RBRACKET { 
-        $$ = create_var_reg($2,SHORT_ARRAY_TYPE,$4);
+        $$ = create_var_reg($2,SHORT_PTR_TYPE,$4);
     }
     | CHAR varname LBRACKET NUMBER RBRACKET { 
-        $$ = create_var_reg($2,CHAR_ARRAY_TYPE,$4); 
+        $$ = create_var_reg($2,CHAR_PTR_TYPE,$4); 
     }
     ;
 var_type_var: 
     SHORT varname{ $$ = create_var_reg($2,SHORT_TYPE,1); }
     | CHAR varname{ $$ = create_var_reg($2,CHAR_TYPE,1); }
     ;
+var_type_ptr: 
+    SHORT MUL varname{ $$ = create_var_reg($3,SHORT_PTR_TYPE,1); }
+    | CHAR MUL varname{ $$ = create_var_reg($3,CHAR_PTR_TYPE,1); }
+    ;
 var_type:
     var_type_var{ $$ = $1; }
     | var_type_list{ $$ = $1; }
+    | var_type_ptr{ $$ = $1; }
     ;
 
-/*arg_type_list:
-    SHORT varname LBRACKET NUMBER RBRACKET { 
-        $$ = create_arg_reg($2);
-    }
-    | CHAR varname LBRACKET NUMBER RBRACKET { 
-        $$ = create_arg_reg($2); 
-    }
-    ;*/
-arg_type_var: 
-    SHORT varname{ $$ = create_arg_reg($2); }
-    | CHAR varname{ $$ = create_arg_reg($2); }
+arg_type_ptr: 
+    SHORT MUL varname{ $$ = create_arg_reg($3,SHORT_PTR_TYPE,func_pipe); }
+    | CHAR MUL varname{ $$ = create_arg_reg($3,CHAR_PTR_TYPE,func_pipe); }
     ;
-/*arg_type :
+arg_type_var: 
+    SHORT varname{ $$ = create_arg_reg($2,SHORT_TYPE,func_pipe); }
+    | CHAR varname{ $$ = create_arg_reg($2,CHAR_TYPE,func_pipe); }
+    ;
+arg_type: 
     arg_type_var{ $$ = $1; }
-    | arg_type_list{ $$ = $1; }
-    ;*/
+    | arg_type_ptr{ $$ = $1; }
+    ;
+
+
 
 program:
     /* empty */
@@ -305,27 +380,31 @@ statement_list:
     ;
 
 arguments_declaration:
-    arg_type_var
-    {
+    arg_type{
         int r = $1;
-        int ad = arg[r].addr;
-        fprintf(out, " ; argument %s addr=0x%04x\n", arg[r].name, ad);
+        int tmp = get_func(func_pipe);
+        func[tmp].num_arg=1;
+        fprintf(out, " ; argument (%d) %s addr=0x%04x\n", func[tmp].arg[r].type,func[tmp].arg[r].name, func[tmp].arg[r].addr);
+        $$ = 1;
     } 
-    | arguments_declaration COMMA arg_type_var
+    | arguments_declaration COMMA arg_type
     {
         int r = $3;
-        int ad = arg[r].addr;
-        fprintf(out, " ; argument %s addr=0x%04x\n", arg[r].name, ad);
+        int tmp = get_func(func_pipe);
+        fprintf(out, " ; argument (%d) %s addr=0x%04x\n", func[tmp].arg[r].type, func[tmp].arg[r].name, func[tmp].arg[r].addr);
+        $$ = $3+1;
     } 
     ;
 
 arguments:
     expression {
-        fprintf(out, "OUTI R%d 0x%04x ; argument %d\n",$1 ,ArgLoc+Arg_set, Arg_set);
-        Arg_set++;
+        int tmp = get_func(func_pipe);
+        fprintf(out, "OUTI R%d 0x%04x ; argument %d\n",$1 ,func[tmp].arg[Arg_set].addr, Arg_set);
+        Arg_set=1;
     }
     | arguments COMMA expression {
-        fprintf(out, "OUTI R%d 0x%04x ; argument %d\n",$3 ,ArgLoc+Arg_set, Arg_set);
+        int tmp = get_func(func_pipe);
+        fprintf(out, "OUTI R%d 0x%04x ; argument %d\n",$3 ,func[tmp].arg[Arg_set].addr, Arg_set);
         Arg_set++;
     }
     ;
@@ -333,11 +412,13 @@ arguments:
 func_set:
     VOID funcname{
         fprintf(out, "%s :\n", $2);
-        create_func($2, 0);
+        create_func($2,0);
+        $$ = $2;
     }      
     | SHORT funcname{
         fprintf(out, "%s :\n", $2);
-        create_func($2, 0);
+        create_func($2,0);
+        $$ = $2;
     }
     ;
 
@@ -345,18 +426,13 @@ funcdeclaration:
     func_set LPAREN RPAREN LBRACE program RBRACE{
     }
     | func_set LPAREN arguments_declaration RPAREN LBRACE program RBRACE{
-        // Mettre à jour le nombre d'arguments de la fonction
-        if(func_count > 0) {
-            func[func_count-1].reg = arg_count;
-        }
-        clear_arg();
-        arg_count = 0;
     }
     ;
 
 func_call:
     funcname LPAREN RPAREN{
-        int num_arg = get_func($1);
+        int tmp = get_func($1);
+        int num_arg = func[get_func($1)].num_arg;
         int r = new_tmp();
         fprintf(out, "CALL ; appel de %s\n", $1);
         fprintf(out, "SUBI SP SP 1\n");
@@ -370,7 +446,8 @@ func_call:
         $$ = r;
     }
     | funcname LPAREN arguments RPAREN{
-        int num_arg = get_func($1);
+        int tmp = get_func($1);
+        int num_arg = func[get_func($1)].num_arg;
         int r = new_tmp();
         fprintf(out, "CALL ; appel de %s\n", $1);
         fprintf(out, "SUBI SP SP 1\n");
@@ -400,29 +477,35 @@ statement:
 
 const_list:
     NUMBER{
-        char *str = malloc(2);
+        int len = snprintf(NULL, 0, "%d", $1);  // taille nécessaire (sans \0)
+        char *str = malloc(len + 1);
         sprintf(str, "%d", $1);
         $$ = str;
     }
     | const_list COMMA NUMBER {
-        char *str = malloc(strlen($1) + 2);
-        sprintf(str, "%s%d", $1, $3);
-        free($1);
+        int len = snprintf(NULL, 0, "%d", $3);  // taille nécessaire (sans \0)
+        char *str = malloc(len + 2);
+        sprintf(str, "%s,%d",$1 ,$3);
         $$ = str;
     }
     ;
 
-list_expression:
-    LBRACE const_list RBRACE{
-        $$ = $2;
-    }
-    | STRING{
-        $$ = $1;
-    }
-    ;
-
 declaration:
-    var_type_list ASSIGN list_expression
+    var_type_list ASSIGN LBRACE const_list RBRACE
+    {
+        int varname = $1;
+        int ad = vars[varname].addr;
+        int r = new_tmp();
+        int num_list[strlen($4)];
+        convert_str_intlist($4,num_list);
+        if(intstrlen(num_list)>vars[varname].reg)yyerror("Array size mismatch");
+        for(int i=0; i<intstrlen(num_list); i++) {
+            fprintf(out, "LOAD R%d %d ; %s[%d] <- %d\n", r,num_list[i], vars[varname].name, i, num_list[i]);
+            fprintf(out, "OUTI R%d 0x%04x\n",r, ad+i);
+        }
+        free($4);
+    }
+    | var_type_list ASSIGN STRING
     {
         int varname = $1;
         int ad = vars[varname].addr;
@@ -433,17 +516,18 @@ declaration:
             fprintf(out, "OUTI R%d 0x%04x\n",r, ad+i);
         }
     }
-    | var_type_var ASSIGN expression
+    | var_type_ptr ASSIGN BAND varname
     {
-        int r = $1;
-        int ad = vars[r].addr;
-        fprintf(out, "OUTI R%d 0x%04x ; déclaration %s addr=0x%04x\n", $3, ad, vars[r].name, ad);
+        int ad_ptr = vars[$1].addr;
+        int ad_var = get_var_addr($4,0);
+        int r = new_tmp();
+        fprintf(out, "LOAD R%d 0x%04x ; %s <- &%s\n", r, ad_var, vars[$1].name, $4);
+        fprintf(out, "OUTI R%d 0x%04x\n",r, ad_ptr);
     }
-    | var_type_list ASSIGN expression
+    | var_type ASSIGN expression
     {
-        int varname = $1;
-        int ad = vars[varname].addr;
-        fprintf(out, "OUTI R%d 0x%04x\n", $3, ad);
+        int ad = vars[$1].addr;
+        fprintf(out, "OUTI R%d 0x%04x ; déclaration %s addr=0x%04x\n", $3, ad, vars[$1].name, ad);
     }
     | var_type
     {
@@ -454,13 +538,27 @@ declaration:
     ;
 
 assignment:
-    varname ASSIGN expression
+    varname ASSIGN BAND varname
+    {
+        int tmp = get_reg_addr($1);
+        int r = new_tmp();
+        if (tmp != -1) {
+            yyerror("internal reg are not of type ptr");
+        } else {
+            int ad_ptr = get_var_addr($1,func_pipe);
+            int ad_var = get_var_addr($4,func_pipe);
+            fprintf(out, "LOAD R%d 0x%04x ; %s <- &%s\n", r, ad_var, $1, $4);
+            fprintf(out, "OUTI R%d 0x%04x", r, ad_ptr);
+        }
+        free($1);
+    }
+    | varname ASSIGN expression
     {
         int tmp = get_reg_addr($1);
         if (tmp != -1) {
             fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", $3, tmp, $1, $3);
         } else {
-            int ad = get_var_addr($1);
+            int ad = get_var_addr($1,func_pipe);
             fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", $3, ad, $1, $3);
         }
         free($1);
@@ -474,10 +572,10 @@ assignment:
             fprintf(out, "%s R%d R%d R%d\n",$2 , r, r, $4);
             fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", r, tmp, $1, r); 
         } else {
-            int ad = get_var_addr($1);
+            int ad = get_var_addr($1,func_pipe);
             fprintf(out, "INI R%d 0x%04x ; %s -> R%d\n", r, ad, $1, r);
             fprintf(out, "%s R%d R%d R%d\n",$2 , r, r, $4);
-            fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", $4, ad, $1, $4);
+            fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", r, ad, $1, r);
         }
         free($1);
     }
@@ -490,17 +588,17 @@ assignment:
             fprintf(out, "%sI R%d R%d %d\n",$2 , r, r, $4);
             fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", r, tmp, $1, r); 
         } else {
-            int ad = get_var_addr($1);
+            int ad = get_var_addr($1,func_pipe);
             fprintf(out, "INI R%d 0x%04x ; %s -> R%d\n", r, ad, $1, r);
             fprintf(out, "%sI R%d R%d %d\n",$2 , r, r, $4);
-            fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", $4, ad, $1, $4);
+            fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", r, ad, $1, r);
         }
         free($1);
     }
     | varname PLUS PLUS
     {
         int r = new_tmp();
-        int ad = get_var_addr($1);
+        int ad = get_var_addr($1,func_pipe);
         fprintf(out, "INI R%d 0x%04x ; lecture %s -> R%d\n", r, ad, $1, r);
         fprintf(out, "ADDI R%d R%d 1\n", r, r);
         fprintf(out, "OUTI R%d 0x%04x ; %s <- %s+1\n", r, ad, $1, $1);
@@ -509,7 +607,7 @@ assignment:
     | varname MINUS MINUS
     {
         int r = new_tmp();
-        int ad = get_var_addr($1);
+        int ad = get_var_addr($1,func_pipe);
         fprintf(out, "INI R%d 0x%04x ; lecture %s -> R%d\n", r, ad, $1, r);
         fprintf(out, "SUBI R%d R%d 1\n", r, r);
         fprintf(out, "OUTI R%d 0x%04x ; %s <- %s-1\n", r, ad, $1, $1);
@@ -523,8 +621,16 @@ assignment:
             sprintf(var_name," Register %s already exists with this name",$1);
             yyerror(var_name);
         }else {
-            int ad = get_var_addr($1);
-            fprintf(out, "OUTI R%d 0x%04x ; %s[%d] <- R%d\n",$6, ad+$3, $1, $3, $6);
+            if(get_var_type($1,func_pipe)==CHAR_PTR_TYPE || get_var_type($1,func_pipe)==SHORT_PTR_TYPE){
+                int ad = get_var_addr($1,func_pipe);
+                int r = new_tmp();
+                fprintf(out, "INI R%d 0x%04x ; %s[%d] <- R%d\n", r, ad, $1, $3, $6);
+                fprintf(out, "ADDI R%d R%d %d\n", r, r, $3);
+                fprintf(out, "OUT R%d R%d\n", $6, r);
+            }else{
+                int ad = get_var_addr($1,func_pipe);
+                fprintf(out, "OUTI R%d 0x%04x ; %s[%d] <- R%d\n",$6, ad+$3, $1, $3, $6);
+            }
         }
         free($1);
     }
@@ -536,89 +642,28 @@ assignment:
             sprintf(var_name," Register %s already exists with this name",$1);
             yyerror(var_name);
         } else {
-            int ad = get_var_addr($1);
-            int r = new_tmp();
-            fprintf(out, "ADDI R%d R%d 0x%04x\n",r, $3, ad);
-            fprintf(out, "OUT R%d R%d ; %s[%d] <- R%d\n",$6, r, $1, $3, $6);
+            if(get_var_type($1,func_pipe)==CHAR_PTR_TYPE || get_var_type($1,func_pipe)==SHORT_PTR_TYPE){
+                int ad = get_var_addr($1,func_pipe);
+                int r = new_tmp();
+                fprintf(out, "INI R%d 0x%04x ; %s[%d] <- R%d\n", r, ad, $1, $3, $6);
+                fprintf(out, "ADD R%d R%d R%d\n", r, r, $3);
+                fprintf(out, "OUT R%d R%d\n", $6, r);
+            }else{
+                int ad = get_var_addr($1,func_pipe);
+                int r = new_tmp();
+                fprintf(out, "ADDI R%d R%d %d\n",r, $3, ad);
+                fprintf(out, "OUT R%d R%d ; %s[%d] <- R%d\n",$6, r, $1, $3, $6);
+            }
         }
         free($1);
     }
     ;
-
 expression:
-    func_call
-    | varname LBRACKET NUMBER RBRACKET
-    {
-        int r = new_tmp();
-        int ad = get_var_addr($1);
-        fprintf(out, "INI R%d 0x%04x ; lecture %s[%d] -> R%d\n", r, ad+$3, $1, $3, r);
-        $$ = r;
-        free($1);
-    }
-    | varname LBRACKET expression RBRACKET
-    {
-        int r = new_tmp();
-        int ad = get_var_addr($1);
-        fprintf(out, "ADDI R%d R%d 0x%04x\n", r, $3, ad);
-        fprintf(out, "IN R%d R%d ; lecture %s[R%d] -> R%d\n", r,r, $1, $3, r);
-        $$ = r;
-        free($1);
-    }
-    | varname
-    {
-        if (strcmp($1, "GPI0") == 0) {
-            int r = new_tmp();
-            fprintf(out, "INI R%d 0x0000 ; lecture GPI0 -> R%d\n", r, r);
-            $$ = r;
-        } else if (strcmp($1, "GPI1") == 0) {
-            int r = new_tmp();
-            fprintf(out, "INI R%d 0x0001 ; lecture GPI1 -> R%d\n", r, r);
-            $$ = r;
-        } else if (strcmp($1, "GPO0") == 0) {
-            int r = new_tmp();
-            fprintf(out, "INI R%d 0x0002 ; lecture GPO0 -> R%d\n", r, r);
-            $$ = r;
-        } else if (strcmp($1, "GPO1") == 0) {
-            int r = new_tmp();
-            fprintf(out, "INI R%d 0x0003 ; lecture GPO1 -> R%d\n", r, r);
-            $$ = r;
-        } else if (strcmp($1, "SPI") == 0) {
-            int r = new_tmp();
-            fprintf(out, "INI R%d 0x0004 ; lecture SPI -> R%d\n", r, r);
-            $$ = r;
-        } else if (strcmp($1, "CONFSPI") == 0) {
-            int r = new_tmp();
-            fprintf(out, "INI R%d 0x0005 ; lecture CONFSPI -> R%d\n", r, r);
-            $$ = r;
-        } else if (strcmp($1, "UART") == 0) {
-            int r = new_tmp();
-            fprintf(out, "INI R%d 0x0006 ; lecture UART -> R%d\n", r, r);
-            $$ = r;
-        } else if (strcmp($1, "BAUDL") == 0) {
-            int r = new_tmp();
-            fprintf(out, "INI R%d 0x0007 ; lecture BAUDL -> R%d\n", r, r);
-            $$ = r;
-        } else if (strcmp($1, "BAUDH") == 0) {
-            int r = new_tmp();
-            fprintf(out, "INI R%d 0x0008 ; lecture BAUDH -> R%d\n", r, r);
-            $$ = r;
-        } else if (strcmp($1, "STATUS") == 0) {
-            int r = new_tmp();
-            fprintf(out, "INI R%d 0x0009 ; lecture STATUS -> R%d\n", r, r);
-            $$ = r;
-        } else if (strcmp($1, "CONFINT") == 0) {
-            int r = new_tmp();
-            fprintf(out, "INI R%d 0x000a ; lecture CONFINT -> R%d\n", r, r);
-            $$ = r;
-        } else {
-            int r = new_tmp();
-            int ad = get_var_addr($1);
-            fprintf(out, "INI R%d 0x%04x ; lecture %s -> R%d\n", r, ad, $1, r);
-            $$ = r;
-        }
-        free($1);
-    }
-    | expression op NUMBER
+    comparable_expression { $$ = $1; }
+    | simple_expression { $$ = $1; }
+    ;
+comparable_expression:
+    expression op NUMBER
     {
         int r = new_tmp();
         fprintf(out, "%sI R%d R%d %d\n",$2 , r, $1, $3);
@@ -667,11 +712,62 @@ expression:
         fprintf(out, "SUB R%d R%d R%d\n", r, r, $2);
         $$ = r;
     }
-    | MINUS NUMBER
+    ;
+
+simple_expression :
+    func_call
+    | varname LBRACKET NUMBER RBRACKET
     {
         int r = new_tmp();
-        fprintf(out, "LOAD R%d 0\n", r);
-        fprintf(out, "SUBI R%d R%d %d\n", r, r, $2);
+        int ad = get_var_addr($1,func_pipe);
+        fprintf(out, "INI R%d 0x%04x\n", r, ad);
+        fprintf(out, "ADDI R%d R%d %d\n", r, r, $3);
+        fprintf(out, "IN R%d R%d ; lecture %s[%d] -> R%d\n", r, r, $1, $3, r);
+        $$ = r;
+        free($1);
+    }
+    | varname LBRACKET expression RBRACKET
+    {
+        int r = new_tmp();
+        int ad = get_var_addr($1,func_pipe);
+        fprintf(out, "INI R%d 0x%04x\n", r, ad);
+        fprintf(out, "ADD R%d R%d R%d\n", r, r, $3);
+        fprintf(out, "IN R%d R%d ; lecture %s[R%d] -> R%d\n", r, r, $1, $3, r);
+        $$ = r;
+        free($1);
+    }
+    | varname
+    {
+        int tmp = get_reg_addr($1);
+        int r = new_tmp();
+        if (tmp != -1) {
+            fprintf(out, "INI R%d 0x%04x ; lecture %s -> R%d\n", r, tmp, $1, r);
+            $$ = r;
+        } else {
+            int vartype = get_var_type($1,func_pipe);
+            int ad = get_var_addr($1,func_pipe);
+            if(vartype == CHAR_PTR_TYPE || vartype == SHORT_PTR_TYPE){
+                fprintf(out, "LOAD R%d 0x%04x ; lecture &%s -> %d\n", r, ad, $1, r);
+            }else{
+                fprintf(out, "INI R%d 0x%04x ; lecture %s -> R%d\n", r, ad, $1, r);
+            }
+            $$ = r;
+        }
+        free($1);
+    }
+    | BAND varname
+    {
+        int r = new_tmp();
+        int ad = get_var_addr($2,func_pipe);
+        fprintf(out, "LOAD R%d 0x%04x ; lecture &%s -> %d\n", r, ad, $2, r);
+        $$ = r;
+        free($2);
+    }
+    | MINUS NUMBER
+    {
+        unsigned short tmp = -$2;
+        int r = new_tmp();
+        fprintf(out, "LOAD R%d %d\n", r, tmp);
         $$ = r;
     }
     | LPAREN expression RPAREN
@@ -690,114 +786,138 @@ condition:
     expression EQ expression
     {
         int r = new_tmp();
-        int thisLabel = labelCount++;
+        TMP_pipe =  read_label();
         fprintf(out,"SUB R%d R%d R%d ; condition ==\n", r, $1, $3);
-        fprintf(out,"JM0 if_%04d\n", thisLabel);      // Si égal (0), aller à if
-        fprintf(out,"JMP else_if_%04d\n", thisLabel);   // Sinon, aller à end_if
-        fprintf(out,"if_%04d :\n", thisLabel);
-        $$ = thisLabel;
+        fprintf(out,"JM0 if_%04d\n", TMP_pipe);      // Si égal (0), aller à if
+        fprintf(out,"JMP else_if_%04d\n", TMP_pipe);   // Sinon, aller à end_if
+        fprintf(out,"if_%04d :\n", TMP_pipe);
+        $$ = TMP_pipe;
     }
     | expression NE expression
     {
         int r = new_tmp();
-        int thisLabel = labelCount++;
+        TMP_pipe = read_label();
         fprintf(out,"SUB R%d R%d R%d ; condition !=\n", r, $1, $3);
-        fprintf(out,"JM0 else_if_%04d\n", thisLabel);   // Si égal (0), aller à end_if
-        fprintf(out,"JMP if_%04d\n", thisLabel);       // Sinon, aller à if
-        fprintf(out,"if_%04d :\n", thisLabel);
-        $$ = thisLabel;
+        fprintf(out,"JM0 else_if_%04d\n", TMP_pipe);   // Si égal (0), aller à end_if
+        fprintf(out,"if_%04d :\n", TMP_pipe);       // Sinon, aller à if
+        $$ = TMP_pipe;
     }
     | expression LE expression
     {
         int r = new_tmp();
-        int thisLabel = labelCount++;
+        TMP_pipe = read_label();
         fprintf(out,"SUB R%d R%d R%d ; condition <=\n", r, $3, $1);
-        fprintf(out,"JMN else_if_%04d\n", thisLabel);       // Si négatif, aller à if
-        fprintf(out,"JMP if_%04d\n", thisLabel);   // Si positif, aller à end_if
-        fprintf(out,"if_%04d :\n", thisLabel);
-        $$ = thisLabel;
+        fprintf(out,"JMN else_if_%04d\n", TMP_pipe);       // Si négatif, aller à if
+        fprintf(out,"if_%04d :\n", TMP_pipe);   // Si positif, aller à end_if
+        $$ = TMP_pipe;
     }
     | expression GE expression
     {
         int r = new_tmp();
-        int thisLabel = labelCount++;
+        TMP_pipe = read_label();
         fprintf(out,"SUB R%d R%d R%d ; condition >=\n", r, $1, $3);  // CORRIGÉ: $1 - $3
-        fprintf(out,"JMN else_if_%04d\n", thisLabel);   // Si négatif, aller à end_if
-        fprintf(out,"JMP if_%04d\n", thisLabel);       // Si positif, aller à if
-        fprintf(out,"if_%04d :\n", thisLabel);
-        $$ = thisLabel;
+        fprintf(out,"JMN else_if_%04d\n", TMP_pipe);   // Si négatif, aller à end_if
+        fprintf(out,"if_%04d :\n", TMP_pipe);       // Si positif, aller à if
+        $$ = TMP_pipe;
     }
     | expression LT expression
     {
         int r = new_tmp();
-        int thisLabel = labelCount++;
+        TMP_pipe = read_label();
         fprintf(out,"SUB R%d R%d R%d ; condition <\n", r, $1, $3);
-        fprintf(out,"JMN if_%04d\n", thisLabel);       // Si négatif, aller à if
-        fprintf(out,"JMP else_if_%04d\n", thisLabel);   // Sinon (>=0), aller à end_if
-        fprintf(out,"if_%04d :\n", thisLabel);
-        $$ = thisLabel;
+        fprintf(out,"JMN if_%04d\n", TMP_pipe);       // Si négatif, aller à if
+        fprintf(out,"JMP else_if_%04d\n", TMP_pipe);   // Sinon (>=0), aller à end_if
+        fprintf(out,"if_%04d :\n", TMP_pipe);
+        $$ = TMP_pipe;
     }
     | expression GT expression
     {
         int r = new_tmp();
-        int thisLabel = labelCount++;
+        TMP_pipe = read_label();
         fprintf(out,"SUB R%d R%d R%d ; condition >\n", r, $3, $1);   // CORRIGÉ: $1 - $3
-        fprintf(out,"JMN if_%04d\n", thisLabel);   // Si négatif, aller à end_if
-        fprintf(out,"JMP else_if_%04d\n", thisLabel);       // Si positif, aller à if
-        fprintf(out,"if_%04d :\n", thisLabel);
-        $$ = thisLabel;
+        fprintf(out,"JMN if_%04d\n", TMP_pipe);   // Si négatif, aller à end_if
+        fprintf(out,"JMP else_if_%04d\n", TMP_pipe);       // Si positif, aller à if
+        fprintf(out,"if_%04d :\n", TMP_pipe);
+        $$ = TMP_pipe;
+    }
+    | comparable_expression
+    {
+        int r = new_tmp();
+        TMP_pipe = read_label();
+        fprintf(out,"JM0 else_if_%04d ; condition != 0\n", TMP_pipe);      // Si égal (0), aller à if
+        fprintf(out,"if_%04d :\n", TMP_pipe);           // Sinon, aller à end_if
+        $$ = TMP_pipe;
+    }
+    | simple_expression
+    {
+        int r = new_tmp();
+        TMP_pipe = read_label();
+        fprintf(out,"SUBI R%d R%d 0 ; condition != 0\n", r, $1);
+        fprintf(out,"JM0 else_if_%04d\n", TMP_pipe);      // Si égal (0), aller à if
+        fprintf(out,"if_%04d :\n", TMP_pipe);           // Sinon, aller à end_if
+        $$ = TMP_pipe;
     }
     ;
 
 Else:
     ELSE
     {
-        fprintf(out,"JMP end_if_%04d\n", labelCount-1);
-        fprintf(out,"else_if_%04d :\n", labelCount-1);
+        fprintf(out,"JMP end_if_%04d\n", read_label());
+        fprintf(out,"else_if_%04d :\n", read_label());
+    }
+    ;
+
+If:
+    IF
+    {
+        push_label();
     }
     ;
 
 if_statement:
-    IF LPAREN condition RPAREN statement Else statement
+    If LPAREN condition RPAREN statement Else statement
     {
-        fprintf(out,"end_if_%04d :\n", $3);
+        fprintf(out,"end_if_%04d :\n", pop_label());
     }
-    | IF LPAREN condition RPAREN statement
+    | If LPAREN condition RPAREN statement
     {
-        fprintf(out,"else_if_%04d :\n", $3);
+        fprintf(out,"else_if_%04d :\n", pop_label());
     }
     ;
 
 While:
     WHILE
     {
-        fprintf(out,"while_%04d :\n", labelCount);
-        $$ = labelCount;
-        labelCount++;
+        int tmp = push_label();
+        fprintf(out,"while_%04d :\n", tmp);
+        $$ = tmp;
     }
     ;
 
 while_statement:
     While LPAREN condition RPAREN statement
     {
-        fprintf(out,"JMP while_%04d\n", $1);
-        fprintf(out,"else_if_%04d :\n", $1+1);
+        int tmp = pop_label();
+        fprintf(out,"JMP while_%04d\n", tmp);
+        fprintf(out,"else_if_%04d :\n", tmp);
     }
     ;
 
-For:
-    FOR
+Semicolon:
+    SEMICOLON
     {
-        fprintf(out,"for_%04d :\n", labelCount+1);
-        $$ = labelCount;
+        int tmp = push_label();
+        fprintf(out,"for_%04d :\n", tmp);
+        $$ = tmp;
     }
     ;
 
 for_statement:
-    For LPAREN declaration SEMICOLON condition SEMICOLON assignment RPAREN statement
+    FOR LPAREN declaration Semicolon condition SEMICOLON assignment RPAREN statement
     {
-        fprintf(out,"JMP for_%04d\n", labelCount);
-        fprintf(out,"else_if_%04d :\n", labelCount-1);
+        int tmp = pop_label();
+        fprintf(out,"JMP for_%04d\n", pop_label());
+        fprintf(out,"else_if_%04d :\n", tmp);
     }
     ;
 
@@ -819,6 +939,7 @@ varname:
 
 funcname:
     IDENT {
+        strcpy(func_pipe,$1);
         $$ = strdup($1); 
     }
     ;
@@ -846,6 +967,7 @@ int main(int argc, char *argv[]) {
     fprintf(out, "JMP main\n");
     yyparse();
     printf("\nCompilation de %s terminée avec succes\n",argv[1]);
+    printf("\nTaille de la Ram : %d/%d (%.2f%%) Half Words\n",var_count,VarSpace,((float)var_count*100/VarSpace));
     fclose(yyin);
     fclose(out);
     return 0;

@@ -5,13 +5,19 @@
 
 #define VarLoc 0x4000
 #define VarSpace 0x5f00
-#define ArgLoc 0x9f01
+#define ArgLoc 0x9f02
+#define ArgLocMax 0x9fff
 #define SP0 0xc0ff
 
 #define SHORT_TYPE 0
-#define CHAR_TYPE 1
-#define SHORT_PTR_TYPE 2
-#define CHAR_PTR_TYPE 3
+#define LONG_TYPE 2
+#define LONG_PTR_TYPE 3
+#define SHORT_PTR_TYPE 4
+
+#define UNSIGNED_SHORT_TYPE 6
+#define UNSIGNED_LONG_TYPE 8
+#define UNSIGNED_LONG_PTR_TYPE 9
+#define UNSIGNED_SHORT_PTR_TYPE 10
 
 #define IF_LOOP 1
 #define WHILE_LOOP 2
@@ -26,7 +32,7 @@ extern FILE *yyin;
 
 typedef struct {
     char name[64];
-    int reg;
+    char reg;
     int addr;
     int type;
 } Var;
@@ -93,36 +99,42 @@ int create_var_reg(const char *name, short type, int byte_lenght) {
     int addr = VarLoc + var_count;
     strncpy(vars[var_count].name, name, sizeof(vars[var_count].name)-1);
     vars[var_count].name[sizeof(vars[var_count].name)-1] = '\0';
-
+    vars[var_count].addr = addr;
+    var_count+=byte_lenght;
     switch (type) {
-        case SHORT_TYPE: // SHORT
-            vars[var_count].reg = reg;
-            vars[var_count].addr = addr;
-            vars[var_count].type = SHORT_TYPE;
-            var_count++;
+        case SHORT_TYPE:
+            vars[reg].reg = reg;
+            vars[reg].type = SHORT_TYPE;
             return reg;
-            break;
-        case SHORT_PTR_TYPE: // SHORT []
-            vars[var_count].reg = byte_lenght;
-            vars[var_count].addr = addr;
-            vars[var_count].type = SHORT_PTR_TYPE;
-            var_count+= byte_lenght;
+        case SHORT_PTR_TYPE:
+            vars[reg].reg = byte_lenght;
+            vars[reg].type = SHORT_PTR_TYPE;
             return reg;
-            break;
-        case CHAR_TYPE: // CHAR
-            vars[var_count].reg = reg;
-            vars[var_count].addr = addr;
-            vars[var_count].type = CHAR_TYPE;
-            var_count++;
+        case LONG_TYPE:
+            vars[reg].reg = reg;
+            vars[reg].type = LONG_TYPE;
             return reg;
-            break;
-        case CHAR_PTR_TYPE: // CHAR []
-            vars[var_count].reg = byte_lenght;
-            vars[var_count].addr = addr;
-            vars[var_count].type = CHAR_PTR_TYPE;
-            var_count+= byte_lenght;
+        case LONG_PTR_TYPE:
+            vars[reg].reg = byte_lenght;
+            vars[reg].type = LONG_PTR_TYPE;
             return reg;
-            break;
+
+        case UNSIGNED_SHORT_TYPE:
+            vars[reg].reg = reg;
+            vars[reg].type = UNSIGNED_SHORT_TYPE;
+            return reg;
+        case UNSIGNED_SHORT_PTR_TYPE:
+            vars[reg].reg = byte_lenght;
+            vars[reg].type = UNSIGNED_SHORT_PTR_TYPE;
+            return reg;
+        case UNSIGNED_LONG_TYPE:
+            vars[reg].reg = reg;
+            vars[reg].type = UNSIGNED_LONG_TYPE;
+            return reg;
+        case UNSIGNED_LONG_PTR_TYPE:
+            vars[reg].reg = byte_lenght;
+            vars[reg].type = UNSIGNED_LONG_PTR_TYPE;
+            return reg;
         default:
             yyerror(" Invalid variable type");
             return 0;
@@ -154,6 +166,18 @@ int get_var_type(const char *name, const char *func_name) {
     return 0;
 }
 
+int get_var_index(const char *name, const char *func_name) {
+    int tmp = get_func(func_name);
+    for (int i = 0; i < func[tmp].num_arg; i++) {
+        if (strcmp(func[tmp].arg[i].name, name) == 0) return i;
+    }
+    for (int i = 0; i < var_count; i++) {
+        if (strcmp(vars[i].name, name) == 0) return i;
+    }
+    yyerror(" Variable doesn't exists");
+    return 0;
+}
+
 int create_arg_reg(const char *name, int type,  const char *func_name) {
     if(test_name(name)) {
         return 0;
@@ -166,14 +190,17 @@ int create_arg_reg(const char *name, int type,  const char *func_name) {
     func[tmp].arg[reg].reg = reg;
     func[tmp].arg[reg].addr = addr;
     func[tmp].arg[reg].type = type;
-    func[tmp].num_arg++;
-    arg_count++;
+    if(type==LONG_PTR_TYPE || type==LONG_TYPE || type==UNSIGNED_LONG_PTR_TYPE || type==UNSIGNED_LONG_TYPE){
+        func[tmp].num_arg+=2;
+        arg_count+=2;
+    }else{
+        func[tmp].num_arg++;
+        arg_count++;
+    }
     return reg;
 }
 
-
-
-void create_func(const char *name, int num_args) {
+void create_func(const char *name) {
     for (int i = 0; i < func_count; i++) {
         if (strcmp(func[i].name, name) == 0){
             yyerror(" Function already exists");
@@ -183,13 +210,13 @@ void create_func(const char *name, int num_args) {
     int reg = func_count;
     strncpy(func[func_count].name, name, sizeof(func[func_count].name)-1);
     func[func_count].name[sizeof(func[func_count].name)-1] = '\0';
-    func[func_count].num_arg = num_args;
+    func[func_count].num_arg = 0;
     func[func_count].arg_offset = arg_count+ArgLoc;
     func_count++;
 }
 
 int new_tmp() {
-    if (tmp_reg > 14) tmp_reg = 8;
+    if (tmp_reg > 14) tmp_reg = 0;
     return tmp_reg++;
 }
 
@@ -208,7 +235,6 @@ void convert_str_intlist(char* list, int* intlist){
     for(int i = 0;i<strlen_list;i++){
         if(list[i]==','){
             buf[buf_cnt] = '\0';
-            printf("valeur buf :%d",atoi(buf));
             intlist[num_cnt]=atoi(buf);
             num_cnt++;
             buf_cnt=0;
@@ -218,19 +244,14 @@ void convert_str_intlist(char* list, int* intlist){
         }
     }
     buf[buf_cnt] = '\0';
-    printf("valeur buf :%d",atoi(buf));
     intlist[num_cnt]=atoi(buf);
     num_cnt++;
     intlist[num_cnt]='\0';
-    for(int j = 0;j<num_cnt;j++){
-        printf("\nvaleur intlist[%d] :%d\n", j,intlist[j]);
-    }
 }
 
 int intstrlen(int* intlist){
     int i=0;
     while(intlist[i]!='\0')i++;
-    printf("valeur i :%d",i);
     return i;
 }
 
@@ -265,12 +286,13 @@ int pop_label(){
 %token <str> IDENT
 %token <str> STRING
 
-%token VOID SHORT CHAR IF ELSE WHILE FOR RETURN
+%token VOID SHORT CHAR LONG USIGN SIGN IF ELSE WHILE FOR RETURN
 %token EQ NE LE GE LT GT
 %token PLUS MINUS MUL DIV SHL SHR BAND BOR BXOR BNOT
 %token ASSIGN
 %token GPI0 GPI1 GPO0 GPO1 SPI CONFSPI UART BAUDL BAUDH STATUS CONFINT
 %token LPAREN RPAREN LBRACE RBRACE SEMICOLON COMMA LCOMMENT RCOMMENT LBRACKET RBRACKET QUOTE
+%token JMCARRY U L S
 
 %type <reg> comparable_expression
 %type <reg> simple_expression
@@ -284,10 +306,10 @@ int pop_label(){
 %type <str> func_set
 %type <str> op 
 %type <str> op_symetrical
-%type <num> var_type_list
-%type <num> var_type_var 
-%type <num> var_type_ptr
-%type <num> var_type
+%type <str> var_type_list
+%type <str> var_type_var 
+%type <str> var_type_ptr
+%type <str> var_type
 %type <num> arg_type_var
 %type <num> arg_type_ptr
 %type <num> arg_type
@@ -329,19 +351,61 @@ op_symetrical :
 
 var_type_list:
     SHORT varname LBRACKET NUMBER RBRACKET { 
-        $$ = create_var_reg($2,SHORT_PTR_TYPE,$4);
+        create_var_reg($2,SHORT_PTR_TYPE,$4);
+        $$ = $2;
     }
-    | CHAR varname LBRACKET NUMBER RBRACKET { 
-        $$ = create_var_reg($2,CHAR_PTR_TYPE,$4); 
+    | LONG varname LBRACKET NUMBER RBRACKET { 
+        create_var_reg($2,LONG_PTR_TYPE,$4*2); 
+        $$ = $2;
+    }
+    | SIGN SHORT varname LBRACKET NUMBER RBRACKET { 
+        create_var_reg($3,SHORT_PTR_TYPE,$5);
+        $$ = $3;
+    }
+    | SIGN LONG varname LBRACKET NUMBER RBRACKET { 
+        create_var_reg($3,LONG_PTR_TYPE,$5*2); 
+        $$ = $3;
+    }
+    | USIGN SHORT varname LBRACKET NUMBER RBRACKET { 
+        create_var_reg($3,UNSIGNED_SHORT_PTR_TYPE,$5);
+        $$ = $3;
+    }
+    | USIGN LONG varname LBRACKET NUMBER RBRACKET { 
+        create_var_reg($3,UNSIGNED_LONG_PTR_TYPE,$5*2); 
+        $$ = $3;
     }
     ;
 var_type_var: 
-    SHORT varname{ $$ = create_var_reg($2,SHORT_TYPE,1); }
-    | CHAR varname{ $$ = create_var_reg($2,CHAR_TYPE,1); }
+    SHORT varname{
+        create_var_reg($2,SHORT_TYPE,1); 
+        $$ = $2;
+    }
+    | LONG varname{ 
+        create_var_reg($2,LONG_TYPE,2); 
+        $$ = $2;
+    }
+    | SIGN SHORT varname{ 
+        create_var_reg($3,SHORT_TYPE,1); 
+        $$ = $3;
+    }
+    | SIGN LONG varname{ 
+        create_var_reg($3,LONG_TYPE,2); 
+        $$ = $3;
+    }
+    | USIGN SHORT varname{ 
+        create_var_reg($3,UNSIGNED_SHORT_TYPE,1); 
+        $$ = $3;
+    }
+    | USIGN LONG varname{ 
+        create_var_reg($3,UNSIGNED_LONG_TYPE,2); 
+        $$ = $3;
+    }
     ;
 var_type_ptr: 
-    SHORT MUL varname{ $$ = create_var_reg($3,SHORT_PTR_TYPE,1); }
-    | CHAR MUL varname{ $$ = create_var_reg($3,CHAR_PTR_TYPE,1); }
+    SHORT MUL varname{ 
+        create_var_reg($3,SHORT_PTR_TYPE,1);
+        $$ = $3; 
+    }
     ;
 var_type:
     var_type_var{ $$ = $1; }
@@ -351,11 +415,15 @@ var_type:
 
 arg_type_ptr: 
     SHORT MUL varname{ $$ = create_arg_reg($3,SHORT_PTR_TYPE,func_pipe); }
-    | CHAR MUL varname{ $$ = create_arg_reg($3,CHAR_PTR_TYPE,func_pipe); }
+    | CHAR MUL varname{ $$ = create_arg_reg($3,LONG_PTR_TYPE,func_pipe); }
     ;
 arg_type_var: 
     SHORT varname{ $$ = create_arg_reg($2,SHORT_TYPE,func_pipe); }
-    | CHAR varname{ $$ = create_arg_reg($2,CHAR_TYPE,func_pipe); }
+    | LONG varname{ $$ = create_arg_reg($2,LONG_TYPE,func_pipe); }
+    | SIGN SHORT varname{ $$ = create_arg_reg($3,LONG_TYPE,func_pipe); }
+    | SIGN LONG varname{ $$ = create_arg_reg($3,LONG_TYPE,func_pipe); }
+    | USIGN SHORT varname{ $$ = create_arg_reg($3,UNSIGNED_SHORT_TYPE,func_pipe); }
+    | USIGN LONG varname{ $$ = create_arg_reg($3,UNSIGNED_LONG_TYPE,func_pipe); }
     ;
 arg_type: 
     arg_type_var{ $$ = $1; }
@@ -366,11 +434,11 @@ arg_type:
 
 program:
     /* empty */
-  | program element
+  | program element { LineCount++; }
   ;
 
 element:
-    funcdeclaration 
+    funcdeclaration { LineCount++; }
   | statement
   ;
 
@@ -383,42 +451,89 @@ arguments_declaration:
     arg_type{
         int r = $1;
         int tmp = get_func(func_pipe);
-        func[tmp].num_arg=1;
-        fprintf(out, " ; argument (%d) %s addr=0x%04x\n", func[tmp].arg[r].type,func[tmp].arg[r].name, func[tmp].arg[r].addr);
+        int type = func[tmp].arg[r].type;
+        if(type==LONG_PTR_TYPE || type==LONG_TYPE || type==UNSIGNED_LONG_PTR_TYPE || type==UNSIGNED_LONG_TYPE){
+            func[tmp].num_arg=2;
+            fprintf(out, " ; argument (%dL) %s addr=0x%04x\n", func[tmp].arg[r].type,func[tmp].arg[r].name, func[tmp].arg[r].addr);
+            fprintf(out, " ; argument (%dH) %s addr=0x%04x\n", func[tmp].arg[r].type,func[tmp].arg[r].name, func[tmp].arg[r].addr+1);
+        }else{
+            func[tmp].num_arg=1;
+            fprintf(out, " ; argument (%d) %s addr=0x%04x\n", func[tmp].arg[r].type,func[tmp].arg[r].name, func[tmp].arg[r].addr);
+        }
         $$ = 1;
     } 
     | arguments_declaration COMMA arg_type
     {
         int r = $3;
         int tmp = get_func(func_pipe);
-        fprintf(out, " ; argument (%d) %s addr=0x%04x\n", func[tmp].arg[r].type, func[tmp].arg[r].name, func[tmp].arg[r].addr);
-        $$ = $3+1;
+        int type = func[tmp].arg[r].type;
+        if(type==LONG_PTR_TYPE || type==LONG_TYPE || type==UNSIGNED_LONG_PTR_TYPE || type==UNSIGNED_LONG_TYPE){
+            func[tmp].num_arg+=2;
+            fprintf(out, " ; argument (%dL) %s addr=0x%04x\n", func[tmp].arg[r].type,func[tmp].arg[r].name, func[tmp].arg[r].addr);
+            fprintf(out, " ; argument (%dH) %s addr=0x%04x\n", func[tmp].arg[r].type,func[tmp].arg[r].name, func[tmp].arg[r].addr+1);
+            $$ = $3+2;
+        }else{
+            func[tmp].num_arg+=1;
+            fprintf(out, " ; argument (%d) %s addr=0x%04x\n", func[tmp].arg[r].type, func[tmp].arg[r].name, func[tmp].arg[r].addr);
+            $$ = $3+1;
+        }
     } 
     ;
 
 arguments:
     expression {
         int tmp = get_func(func_pipe);
-        fprintf(out, "OUTI R%d 0x%04x ; argument %d\n",$1 ,func[tmp].arg[Arg_set].addr, Arg_set);
-        Arg_set=1;
+        int type = func[tmp].arg[$1].type;
+        int r2=($1<14)?($1+1):0;
+        if(type==LONG_PTR_TYPE || type==LONG_TYPE || type==UNSIGNED_LONG_PTR_TYPE || type==UNSIGNED_LONG_TYPE){
+            fprintf(out, "OUTI R%d 0x%04x ; argument %d\n",$1 ,func[tmp].arg[Arg_set].addr, Arg_set);
+            fprintf(out, "OUTI R%d 0x%04x ; argument %d\n",r2 ,func[tmp].arg[Arg_set].addr+1, Arg_set);
+            Arg_set=2;
+        }else{
+            fprintf(out, "OUTI R%d 0x%04x ; argument %d\n",$1 ,func[tmp].arg[Arg_set].addr, Arg_set);
+            Arg_set=1;
+        }
     }
     | arguments COMMA expression {
         int tmp = get_func(func_pipe);
-        fprintf(out, "OUTI R%d 0x%04x ; argument %d\n",$3 ,func[tmp].arg[Arg_set].addr, Arg_set);
-        Arg_set++;
+        int type = func[tmp].arg[$3].type;
+        int r2=($3<14)?($3+1):0;
+        if(type==LONG_PTR_TYPE || type==LONG_TYPE || type==UNSIGNED_LONG_PTR_TYPE || type==UNSIGNED_LONG_TYPE){
+            fprintf(out, "OUTI R%d 0x%04x ; argument %d\n",$3 ,func[tmp].arg[Arg_set].addr, Arg_set);
+            fprintf(out, "OUTI R%d 0x%04x ; argument %d\n",r2 ,func[tmp].arg[Arg_set].addr+1, Arg_set);
+            Arg_set+=2;
+        }else{
+            fprintf(out, "OUTI R%d 0x%04x ; argument %d\n",$3 ,func[tmp].arg[Arg_set].addr, Arg_set);
+            Arg_set+=1;
+        }
     }
     ;
 
 func_set:
     VOID funcname{
         fprintf(out, "%s :\n", $2);
-        create_func($2,0);
+        create_func($2);
         $$ = $2;
-    }      
+    }
     | SHORT funcname{
         fprintf(out, "%s :\n", $2);
-        create_func($2,0);
+        create_func($2);
         $$ = $2;
+    }
+    | LONG funcname{
+        fprintf(out, "%s :\n", $2);
+        create_func($2);
+        $$ = $2;
+    }
+    | LONG MUL funcname{
+        fprintf(out, "%s :\n", $3);
+        create_func($3);
+        $$ = $3;
+    }
+    | SHORT MUL funcname{
+        fprintf(out, "%s :\n", $3);
+        create_func($3);
+        $$ = $3;
     }
     ;
 
@@ -432,12 +547,11 @@ funcdeclaration:
 func_call:
     funcname LPAREN RPAREN{
         int tmp = get_func($1);
-        int num_arg = func[get_func($1)].num_arg;
         int r = new_tmp();
         fprintf(out, "CALL ; appel de %s\n", $1);
         fprintf(out, "SUBI SP SP 1\n");
         fprintf(out, "JMP %s\n", $1);
-        fprintf(out, "INI R%d 0x%x\n",r,ArgLoc-1);
+        fprintf(out, "INI R%d 0x%x\n",r,ArgLoc-2);
         if(Arg_set != 0){
             yyerror("Function called with wrong number of arguments");
         }
@@ -447,12 +561,13 @@ func_call:
     }
     | funcname LPAREN arguments RPAREN{
         int tmp = get_func($1);
-        int num_arg = func[get_func($1)].num_arg;
+        int num_arg = func[tmp].num_arg;
         int r = new_tmp();
+        int r2 = new_tmp();
         fprintf(out, "CALL ; appel de %s\n", $1);
         fprintf(out, "SUBI SP SP 1\n");
         fprintf(out, "JMP %s\n", $1);
-        fprintf(out, "INI R%d 0x%x\n",r,ArgLoc-1);
+        fprintf(out, "INI R%d 0x%x\n",r,ArgLoc-2);
         if(Arg_set != num_arg){
             yyerror("Function called with wrong number of arguments");
         }
@@ -471,7 +586,8 @@ statement:
     | assignment SEMICOLON
     | func_call SEMICOLON
     | RETURN expression SEMICOLON{
-        fprintf(out, "OUTI R%d 0x%04x\nADDI SP SP 1 ;return\nRET\n",$2,ArgLoc-1);
+        fprintf(out, "OUTI R%c 0x%04x\n",$2,ArgLoc-2);
+        fprintf(out, "ADDI SP SP 1 ;return\nRET\n\n");
     }
     ;
 
@@ -493,47 +609,62 @@ const_list:
 declaration:
     var_type_list ASSIGN LBRACE const_list RBRACE
     {
-        int varname = $1;
-        int ad = vars[varname].addr;
+        int varindex = get_var_index($1,func_pipe);
+        int ad = vars[varindex].addr;
+        int type = vars[varindex].type;
         int r = new_tmp();
+        int r2 = new_tmp();
         int num_list[strlen($4)];
         convert_str_intlist($4,num_list);
-        if(intstrlen(num_list)>vars[varname].reg)yyerror("Array size mismatch");
-        for(int i=0; i<intstrlen(num_list); i++) {
-            fprintf(out, "LOAD R%d %d ; %s[%d] <- %d\n", r,num_list[i], vars[varname].name, i, num_list[i]);
-            fprintf(out, "OUTI R%d 0x%04x\n",r, ad+i);
+        if(type==LONG_PTR_TYPE || type==LONG_TYPE || type==UNSIGNED_LONG_PTR_TYPE || type==UNSIGNED_LONG_TYPE){
+            if(intstrlen(num_list)>vars[varindex].reg)yyerror("Array size mismatch");
+            for(int i=0; i<intstrlen(num_list)*2; i+=2) {
+                fprintf(out, "LOAD R%d %d ; %s[%d] <- %d\n", r,num_list[i>>1]&0xffff, vars[varindex].name, i, num_list[i>>1]);
+                fprintf(out, "OUTI R%d 0x%04x\n",r, ad+i);
+                fprintf(out, "LOAD R%d %d", r,(num_list[i]>>16)&0xffff);
+                fprintf(out, "OUTI R%d 0x%04x\n",r, ad+i+1);
+            }
+        }else{
+            if(intstrlen(num_list)>vars[varindex].reg)yyerror("Array size mismatch");
+            for(int i=0; i<intstrlen(num_list); i++) {
+                fprintf(out, "LOAD R%d %d ; %s[%d] <- %d\n", r,num_list[i]&0xffff, vars[varindex].name, i, num_list[i]);
+                fprintf(out, "OUTI R%d 0x%04x\n",r, ad+i);
+            }
         }
+        
         free($4);
     }
     | var_type_list ASSIGN STRING
     {
-        int varname = $1;
-        int ad = vars[varname].addr;
+        int varindex = get_var_index($1,func_pipe);
+        int ad = vars[varindex].addr;
         int r = new_tmp();
-        if(strlen($3)>vars[varname].reg)yyerror("Array size mismatch");
+        if(strlen($3)>vars[varindex].reg)yyerror("Array size mismatch");
         for(int i=0; i<strlen($3); i++) {
-            fprintf(out, "LOAD R%d %d ; %s[%d] <- %d\n", r,$3[i], vars[varname].name, i, $3[i]);
+            fprintf(out, "LOAD R%d %d ; %s[%d] <- %d\n", r,$3[i], vars[varindex].name, i, $3[i]);
             fprintf(out, "OUTI R%d 0x%04x\n",r, ad+i);
         }
     }
     | var_type_ptr ASSIGN BAND varname
     {
-        int ad_ptr = vars[$1].addr;
+        int varindex = get_var_index($1,func_pipe);
+        int ad_ptr = vars[varindex].addr;
         int ad_var = get_var_addr($4,0);
         int r = new_tmp();
-        fprintf(out, "LOAD R%d 0x%04x ; %s <- &%s\n", r, ad_var, vars[$1].name, $4);
+        fprintf(out, "LOAD R%d 0x%04x ; %s <- &%s\n", r, ad_var, vars[varindex].name, $4);
         fprintf(out, "OUTI R%d 0x%04x\n",r, ad_ptr);
     }
     | var_type ASSIGN expression
     {
-        int ad = vars[$1].addr;
-        fprintf(out, "OUTI R%d 0x%04x ; déclaration %s addr=0x%04x\n", $3, ad, vars[$1].name, ad);
+        int varindex = get_var_index($1,func_pipe);
+        int ad = vars[varindex].addr;
+        fprintf(out, "OUTI R%d 0x%04x ; déclaration long %s addr=0x%04x\n", $3, ad, vars[varindex].name, ad);
     }
     | var_type
     {
-        int r = $1;
-        int ad = vars[r].addr;
-        fprintf(out, ";  déclaration %s addr=0x%04x\n", vars[r].name, ad);
+        int varindex = get_var_index($1,func_pipe);
+        int ad = vars[varindex].addr;
+        fprintf(out, ";  déclaration %s addr=0x%04x\n", vars[varindex].name, ad);
     }
     ;
 
@@ -555,10 +686,10 @@ assignment:
     | varname ASSIGN expression
     {
         int tmp = get_reg_addr($1);
+        int ad = get_var_addr($1,func_pipe);
         if (tmp != -1) {
             fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", $3, tmp, $1, $3);
         } else {
-            int ad = get_var_addr($1,func_pipe);
             fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", $3, ad, $1, $3);
         }
         free($1);
@@ -566,12 +697,13 @@ assignment:
     | varname op ASSIGN expression
     {
         int r = new_tmp();
+        int r2 = new_tmp();
         int tmp = get_reg_addr($1);
         if (tmp != -1) {
             fprintf(out, "INI R%d 0x%04x ; %s -> R%d\n", r, tmp, $1, r);
             fprintf(out, "%s R%d R%d R%d\n",$2 , r, r, $4);
             fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", r, tmp, $1, r); 
-        } else {
+        }else{
             int ad = get_var_addr($1,func_pipe);
             fprintf(out, "INI R%d 0x%04x ; %s -> R%d\n", r, ad, $1, r);
             fprintf(out, "%s R%d R%d R%d\n",$2 , r, r, $4);
@@ -582,6 +714,8 @@ assignment:
     | varname op ASSIGN NUMBER
     {
         int r = new_tmp();
+        int r2 = new_tmp();
+        int r3 = new_tmp();
         int tmp = get_reg_addr($1);
         if (tmp != -1) {
             fprintf(out, "INI R%d 0x%04x ; %s -> R%d\n", r, tmp, $1, r);
@@ -590,27 +724,49 @@ assignment:
         } else {
             int ad = get_var_addr($1,func_pipe);
             fprintf(out, "INI R%d 0x%04x ; %s -> R%d\n", r, ad, $1, r);
+            if(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($1,func_pipe)==LONG_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_TYPE)fprintf(out, "INI R%d 0x%04x\n", r2, ad+1);
             fprintf(out, "%sI R%d R%d %d\n",$2 , r, r, $4);
+            if(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($1,func_pipe)==LONG_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_TYPE){
+                fprintf(out, "LOAD R%d %d\n",$2 , r3, $4);
+                fprintf(out, "%sC R%d R%d %d\n",$2 , r2, r2, r3);
+            }
             fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", r, ad, $1, r);
+            if(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($1,func_pipe)==LONG_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_TYPE)fprintf(out, "OUTI R%d 0x%04x\n", r2, ad+1);
         }
         free($1);
     }
     | varname PLUS PLUS
     {
         int r = new_tmp();
+        int r2 = new_tmp();
+        int r3 = new_tmp();
         int ad = get_var_addr($1,func_pipe);
         fprintf(out, "INI R%d 0x%04x ; lecture %s -> R%d\n", r, ad, $1, r);
+        if(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($1,func_pipe)==LONG_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_TYPE)fprintf(out, "INI R%d 0x%04x\n", r2, ad+1);
         fprintf(out, "ADDI R%d R%d 1\n", r, r);
+        if(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($1,func_pipe)==LONG_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_TYPE){
+            fprintf(out, "LOAD R%d 0\n", r3);
+            fprintf(out, "ADDC R%d R%d R%d\n", r2, r2, r3);
+        }
         fprintf(out, "OUTI R%d 0x%04x ; %s <- %s+1\n", r, ad, $1, $1);
+        if(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($1,func_pipe)==LONG_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_TYPE)fprintf(out, "OUTI R%d 0x%04x\n", r2, ad+1);
         free($1);
     }
     | varname MINUS MINUS
     {
         int r = new_tmp();
+        int r2 = new_tmp();
+        int r3 = new_tmp();
         int ad = get_var_addr($1,func_pipe);
         fprintf(out, "INI R%d 0x%04x ; lecture %s -> R%d\n", r, ad, $1, r);
+        if(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($1,func_pipe)==LONG_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_TYPE)fprintf(out, "INI R%d 0x%04x\n", r2, ad+1);
         fprintf(out, "SUBI R%d R%d 1\n", r, r);
-        fprintf(out, "OUTI R%d 0x%04x ; %s <- %s-1\n", r, ad, $1, $1);
+        if(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($1,func_pipe)==LONG_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_TYPE){
+            fprintf(out, "LOAD R%d 0\n", r3);
+            fprintf(out, "SUBC R%d R%d R%d\n", r2, r2, r3);
+        }
+        fprintf(out, "OUTI R%d 0x%04x ; %s <- %s+1\n", r, ad, $1, $1);
+        if(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($1,func_pipe)==LONG_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_TYPE)fprintf(out, "OUTI R%d 0x%04x\n", r2, ad+1);
         free($1);
     }
     | varname LBRACKET NUMBER RBRACKET ASSIGN expression
@@ -621,14 +777,14 @@ assignment:
             sprintf(var_name," Register %s already exists with this name",$1);
             yyerror(var_name);
         }else {
-            if(get_var_type($1,func_pipe)==CHAR_PTR_TYPE || get_var_type($1,func_pipe)==SHORT_PTR_TYPE){
+            int ad = get_var_addr($1,func_pipe);
+            if(ad>=ArgLoc && ad<=ArgLocMax){
                 int ad = get_var_addr($1,func_pipe);
                 int r = new_tmp();
-                fprintf(out, "INI R%d 0x%04x ; %s[%d] <- R%d\n", r, ad, $1, $3, $6);
+                fprintf(out, "INI R%d 0x%04x ; %s[%d] <- R%s\n", r, ad, $1, $3, $6);
                 fprintf(out, "ADDI R%d R%d %d\n", r, r, $3);
                 fprintf(out, "OUT R%d R%d\n", $6, r);
             }else{
-                int ad = get_var_addr($1,func_pipe);
                 fprintf(out, "OUTI R%d 0x%04x ; %s[%d] <- R%d\n",$6, ad+$3, $1, $3, $6);
             }
         }
@@ -642,16 +798,15 @@ assignment:
             sprintf(var_name," Register %s already exists with this name",$1);
             yyerror(var_name);
         } else {
-            if(get_var_type($1,func_pipe)==CHAR_PTR_TYPE || get_var_type($1,func_pipe)==SHORT_PTR_TYPE){
-                int ad = get_var_addr($1,func_pipe);
-                int r = new_tmp();
-                fprintf(out, "INI R%d 0x%04x ; %s[%d] <- R%d\n", r, ad, $1, $3, $6);
+            int ad = get_var_addr($1,func_pipe);
+            int r = new_tmp();
+            if(!(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==SHORT_PTR_TYPE))yyerror("variable not of type ptr/array");
+            if(ad>=ArgLoc && ad<=ArgLocMax){
+                fprintf(out, "INI R%d 0x%04x ; %s[%d] <- R%s\n", r, ad, $1, $3, $6);
                 fprintf(out, "ADD R%d R%d R%d\n", r, r, $3);
                 fprintf(out, "OUT R%d R%d\n", $6, r);
             }else{
-                int ad = get_var_addr($1,func_pipe);
-                int r = new_tmp();
-                fprintf(out, "ADDI R%d R%d %d\n",r, $3, ad);
+                fprintf(out, "ADDI R%d R%d 0x%04x\n",r, $3, ad);
                 fprintf(out, "OUT R%d R%d ; %s[%d] <- R%d\n",$6, r, $1, $3, $6);
             }
         }
@@ -678,25 +833,26 @@ comparable_expression:
     | expression op expression
     {
         int r = new_tmp();
+        int r2 = -48;
         fprintf(out, "%s R%d R%d R%d\n",$2 , r, $1, $3);
         $$ = r;
     }
     | BNOT LPAREN expression BAND NUMBER RPAREN
     {
         int r = new_tmp();
-        fprintf(out, "NANDI R%d R%d %d\n", r, $3, $5);
+        fprintf(out, "NANDI R%d R%d %d\n", r, $3, $5&0xffff);
         $$ = r;
     }
     | BNOT LPAREN NUMBER BAND expression RPAREN
     {
         int r = new_tmp();
-        fprintf(out, "NANDI R%d R%d %d\n", r, $5, $3);
+        fprintf(out, "NANDI R%d R%d %d\n", r, $5, $3&0xffff);
         $$ = r;
     }
     | BNOT LPAREN expression BAND expression RPAREN
     {
         int r = new_tmp();
-        fprintf(out, "NAND R%d R%d R%d\n", r, $3, $5);
+        fprintf(out, "NAND R%d R%d R%d\n", r, $5, $3);
         $$ = r;
     }
     | BNOT expression
@@ -720,9 +876,26 @@ simple_expression :
     {
         int r = new_tmp();
         int ad = get_var_addr($1,func_pipe);
-        fprintf(out, "INI R%d 0x%04x\n", r, ad);
-        fprintf(out, "ADDI R%d R%d %d\n", r, r, $3);
-        fprintf(out, "IN R%d R%d ; lecture %s[%d] -> R%d\n", r, r, $1, $3, r);
+        int type = get_var_type($1,func_pipe);
+        if(!(type==LONG_PTR_TYPE || type==SHORT_PTR_TYPE))yyerror("variable not of type ptr/array");    //Attention erreur
+        if(type==LONG_PTR_TYPE){
+            if(ad>=ArgLoc && ad<=ArgLocMax){
+                fprintf(out, "INI R%d 0x%04x\n", r, ad);
+                fprintf(out, "ADDI R%d R%d %d\n", r, r, $3*2);
+                fprintf(out, "IN R%d R%d ; lecture %s[%d] -> R%d\n", r, r, $1, $3, r);
+            }else{
+                fprintf(out, "INI R%d 0x%04x ; lecture %s[%d] -> R%d\n", r, ad+($3*2), $1, $3, r);
+                fprintf(out, "INI R%d 0x%04x", r, ad+($3*2)+1);
+            }
+        }else{
+            if(ad>=ArgLoc && ad<=ArgLocMax){
+                fprintf(out, "INI R%d 0x%04x\n", r, ad);
+                fprintf(out, "ADDI R%d R%d %d\n", r, r, $3);
+                fprintf(out, "IN R%d R%d ; lecture %s[%d] -> R%d\n", r, r, $1, $3, r);
+            }else{
+                fprintf(out, "INI R%d 0x%04x ; lecture %s[%d] -> R%d\n", r, ad+$3, $1, $3, r);
+            }
+        }
         $$ = r;
         free($1);
     }
@@ -730,9 +903,27 @@ simple_expression :
     {
         int r = new_tmp();
         int ad = get_var_addr($1,func_pipe);
-        fprintf(out, "INI R%d 0x%04x\n", r, ad);
-        fprintf(out, "ADD R%d R%d R%d\n", r, r, $3);
-        fprintf(out, "IN R%d R%d ; lecture %s[R%d] -> R%d\n", r, r, $1, $3, r);
+        int type = get_var_type($1,func_pipe);
+        if(!(type==LONG_PTR_TYPE || type==SHORT_PTR_TYPE))yyerror("variable not of type ptr/array");
+        if(type==LONG_PTR_TYPE){
+            if(ad>=ArgLoc && ad<=ArgLocMax){
+                fprintf(out, "INI R%d 0x%04x\n", r, ad);
+                fprintf(out, "ADD R%d R%d R%d\n", r, r, $3);
+                fprintf(out, "IN R%d R%d ; lecture %s[R%d] -> R%d\n", r, r, $1, $3, r);
+            }else{
+                fprintf(out, "ADDI R%d R%d 0x%04x\n", r, $3, ad);
+                fprintf(out, "IN R%d R%d ; lecture %s[R%d] -> R%d\n", r, r, $1, $3, r);
+            }
+        }else{
+           if(ad>=ArgLoc && ad<=ArgLocMax){
+                fprintf(out, "INI R%d 0x%04x\n", r, ad);
+                fprintf(out, "ADD R%d R%d R%d\n", r, r, $3);
+                fprintf(out, "IN R%d R%d ; lecture %s[R%d] -> R%d\n", r, r, $1, $3, r);
+            }else{
+                fprintf(out, "ADDI R%d R%d 0x%04x\n", r, $3, ad);
+                fprintf(out, "IN R%d R%d ; lecture %s[R%d] -> R%d\n", r, r, $1, $3, r);
+            }
+        }
         $$ = r;
         free($1);
     }
@@ -746,7 +937,11 @@ simple_expression :
         } else {
             int vartype = get_var_type($1,func_pipe);
             int ad = get_var_addr($1,func_pipe);
-            if(vartype == CHAR_PTR_TYPE || vartype == SHORT_PTR_TYPE){
+            if(vartype == UNSIGNED_LONG_PTR_TYPE || vartype == LONG_PTR_TYPE){
+                fprintf(out, "LOAD R%d 0x%04x ; lecture &%s -> %d\n", r, ad, $1, r);
+            }else if(vartype == UNSIGNED_LONG_TYPE || vartype == LONG_TYPE){
+                fprintf(out, "INI R%d 0x%04x ; lecture %s -> R%d\n", r, ad, $1, r);
+            }else if(vartype == UNSIGNED_SHORT_PTR_TYPE || vartype == SHORT_PTR_TYPE){
                 fprintf(out, "LOAD R%d 0x%04x ; lecture &%s -> %d\n", r, ad, $1, r);
             }else{
                 fprintf(out, "INI R%d 0x%04x ; lecture %s -> R%d\n", r, ad, $1, r);
@@ -777,13 +972,21 @@ simple_expression :
     | NUMBER
     {
         int r = new_tmp();
-        fprintf(out, "LOAD R%d %d\n", r, $1);
+        fprintf(out, "LOAD R%d %d\n", r, $1&0xffff);
         $$ = r;
     }
     ;
 
 condition:
-    expression EQ expression
+    JMCARRY
+    {
+        TMP_pipe =  read_label();
+        fprintf(out,"JMC if_%04d\n", TMP_pipe);      // Si égal (0), aller à if
+        fprintf(out,"JMP else_if_%04d\n", TMP_pipe);   // Sinon, aller à end_if
+        fprintf(out,"if_%04d :\n", TMP_pipe);
+        $$ = TMP_pipe;
+    }
+    | expression EQ expression
     {
         int r = new_tmp();
         TMP_pipe =  read_label();
@@ -807,7 +1010,7 @@ condition:
         int r = new_tmp();
         TMP_pipe = read_label();
         fprintf(out,"SUB R%d R%d R%d ; condition <=\n", r, $3, $1);
-        fprintf(out,"JMN else_if_%04d\n", TMP_pipe);       // Si négatif, aller à if
+        fprintf(out,"JMC else_if_%04d\n", TMP_pipe);       // Si négatif, aller à if
         fprintf(out,"if_%04d :\n", TMP_pipe);   // Si positif, aller à end_if
         $$ = TMP_pipe;
     }
@@ -816,7 +1019,7 @@ condition:
         int r = new_tmp();
         TMP_pipe = read_label();
         fprintf(out,"SUB R%d R%d R%d ; condition >=\n", r, $1, $3);  // CORRIGÉ: $1 - $3
-        fprintf(out,"JMN else_if_%04d\n", TMP_pipe);   // Si négatif, aller à end_if
+        fprintf(out,"JMC else_if_%04d\n", TMP_pipe);   // Si négatif, aller à end_if
         fprintf(out,"if_%04d :\n", TMP_pipe);       // Si positif, aller à if
         $$ = TMP_pipe;
     }
@@ -825,7 +1028,7 @@ condition:
         int r = new_tmp();
         TMP_pipe = read_label();
         fprintf(out,"SUB R%d R%d R%d ; condition <\n", r, $1, $3);
-        fprintf(out,"JMN if_%04d\n", TMP_pipe);       // Si négatif, aller à if
+        fprintf(out,"JMC if_%04d\n", TMP_pipe);       // Si négatif, aller à if
         fprintf(out,"JMP else_if_%04d\n", TMP_pipe);   // Sinon (>=0), aller à end_if
         fprintf(out,"if_%04d :\n", TMP_pipe);
         $$ = TMP_pipe;
@@ -835,7 +1038,7 @@ condition:
         int r = new_tmp();
         TMP_pipe = read_label();
         fprintf(out,"SUB R%d R%d R%d ; condition >\n", r, $3, $1);   // CORRIGÉ: $1 - $3
-        fprintf(out,"JMN if_%04d\n", TMP_pipe);   // Si négatif, aller à end_if
+        fprintf(out,"JMC if_%04d\n", TMP_pipe);   // Si négatif, aller à end_if
         fprintf(out,"JMP else_if_%04d\n", TMP_pipe);       // Si positif, aller à if
         fprintf(out,"if_%04d :\n", TMP_pipe);
         $$ = TMP_pipe;
@@ -916,7 +1119,7 @@ for_statement:
     FOR LPAREN declaration Semicolon condition SEMICOLON assignment RPAREN statement
     {
         int tmp = pop_label();
-        fprintf(out,"JMP for_%04d\n", pop_label());
+        fprintf(out,"JMP for_%04d\n", tmp);
         fprintf(out,"else_if_%04d :\n", tmp);
     }
     ;

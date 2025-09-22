@@ -1,5 +1,5 @@
 # CPU5.9-C-compiler
-Custom basic C compiler based on flex and bison.
+Custom basic C compiler based on flex and bison with standard libraries.
 
 ## Installation
 1. Compile the `lexer.l` file and `parser.y` file:
@@ -33,8 +33,7 @@ gcc -E -P main.c -o main.i
 See my ASM compiler here : https://github.com/retasquid/CPU5-ASM-Compiler
 
 ## Limitations
-The C implemented is very basic with only `short` realy working(`int` and `char` are understood`shorts`).
-Pointers and list are available.
+The C implemented is very basic with only `unsigned short` realy working(`int` and `char` are understood`shorts`).
 
 The compile process don't have a linker so the file include should have the code in them.
 
@@ -42,6 +41,6 @@ The conditions operation `&&`, `||` and `!` are not implemented and conditions c
 
 However, you can combine expressions like `if((i&1)==mult(4,6)){}`
 
-For now `*` and `/` operations output MULT and DIV code and an error message because the CPU5.9 can't mult or divide. Consider replacing them with functions like `mult(int a, int b)` or `div(int a, int b)`
+For now `*` and `/` operations output MULT and DIV code and an error message because the CPU5.9 can't multiply or divide. Consider replacing them with functions like `mult(int a, int b)` or `div(int a, int b)`
 
 

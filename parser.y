@@ -3,10 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define VarLoc 0x4000
-#define VarSpace 0x5f00
-#define ArgLoc 0x9f02
-#define ArgLocMax 0x9fff
+#define VarLoc 0x4000    //0x4000
+#define VarSpace 0x3f00 //0x5f00
+#define ArgLoc 0x7f02   //0x9f02
+#define ArgLocMax 0x7fff//0x9fff
 #define SP0 0xc0ff
 
 #define SHORT_TYPE 0
@@ -22,6 +22,9 @@
 #define IF_LOOP 1
 #define WHILE_LOOP 2
 #define FOR_LOOP 3
+
+#define FIRST_REG 0
+#define LAST_REG 14
 
 int yylex(void);
 void yyerror(const char *s);
@@ -52,7 +55,7 @@ int func_count = 0;
 int tmp_Arg_cnt = 0;
 int Arg_set = 0;
 int arg_count = 0;
-int tmp_reg = 8; // R8..R14 pour temporaires
+int tmp_reg = 0; // R0..R14 pour temporaires
 int labelCount = 0; // compteur global pour labels uniques
 int LineCount = 0; // compteur de ligne du code source
 int TMP_pipe = 0;
@@ -180,6 +183,7 @@ int get_var_index(const char *name, const char *func_name) {
 
 int create_arg_reg(const char *name, int type,  const char *func_name) {
     if(test_name(name)) {
+        yyerror(" Arg doesn't exists");
         return 0;
     }
     int tmp = get_func(func_name);
@@ -215,9 +219,15 @@ void create_func(const char *name) {
     func_count++;
 }
 
+
 int new_tmp() {
-    if (tmp_reg > 14) tmp_reg = 0;
+    if (tmp_reg > LAST_REG) tmp_reg = FIRST_REG;
     return tmp_reg++;
+}
+
+int next_tmp(int reg) {
+    if (reg > LAST_REG) reg = FIRST_REG;
+    return reg++;
 }
 
 int get_reg_addr(const char* name) {
@@ -406,6 +416,10 @@ var_type_ptr:
         create_var_reg($3,SHORT_PTR_TYPE,1);
         $$ = $3; 
     }
+    | LONG MUL varname{ 
+        create_var_reg($3,LONG_PTR_TYPE,2);
+        $$ = $3; 
+    }
     ;
 var_type:
     var_type_var{ $$ = $1; }
@@ -415,12 +429,12 @@ var_type:
 
 arg_type_ptr: 
     SHORT MUL varname{ $$ = create_arg_reg($3,SHORT_PTR_TYPE,func_pipe); }
-    | CHAR MUL varname{ $$ = create_arg_reg($3,LONG_PTR_TYPE,func_pipe); }
+    | LONG MUL varname{ $$ = create_arg_reg($3,LONG_PTR_TYPE,func_pipe); }
     ;
 arg_type_var: 
     SHORT varname{ $$ = create_arg_reg($2,SHORT_TYPE,func_pipe); }
     | LONG varname{ $$ = create_arg_reg($2,LONG_TYPE,func_pipe); }
-    | SIGN SHORT varname{ $$ = create_arg_reg($3,LONG_TYPE,func_pipe); }
+    | SIGN SHORT varname{ $$ = create_arg_reg($3,SHORT_TYPE,func_pipe); }
     | SIGN LONG varname{ $$ = create_arg_reg($3,LONG_TYPE,func_pipe); }
     | USIGN SHORT varname{ $$ = create_arg_reg($3,UNSIGNED_SHORT_TYPE,func_pipe); }
     | USIGN LONG varname{ $$ = create_arg_reg($3,UNSIGNED_LONG_TYPE,func_pipe); }
@@ -433,12 +447,11 @@ arg_type:
 
 
 program:
-    /* empty */
-  | program element { LineCount++; }
-  ;
+    /* vide */
+    | program element 
 
 element:
-    funcdeclaration { LineCount++; }
+    funcdeclaration { LineCount++;}
   | statement
   ;
 
@@ -586,22 +599,23 @@ statement:
     | assignment SEMICOLON
     | func_call SEMICOLON
     | RETURN expression SEMICOLON{
-        fprintf(out, "OUTI R%c 0x%04x\n",$2,ArgLoc-2);
+        fprintf(out, "OUTI R%d 0x%04x\n",$2,ArgLoc-2);
         fprintf(out, "ADDI SP SP 1 ;return\nRET\n\n");
     }
     ;
 
 const_list:
-    NUMBER{
-        int len = snprintf(NULL, 0, "%d", $1);  // taille nécessaire (sans \0)
+    NUMBER {
+        int len = snprintf(NULL, 0, "%d", $1);
         char *str = malloc(len + 1);
         sprintf(str, "%d", $1);
         $$ = str;
     }
     | const_list COMMA NUMBER {
-        int len = snprintf(NULL, 0, "%d", $3);  // taille nécessaire (sans \0)
-        char *str = malloc(len + 2);
-        sprintf(str, "%s,%d",$1 ,$3);
+        int len = snprintf(NULL, 0, "%d", $3);
+        char *str = malloc(1 + len + 1);
+        sprintf(str, "%s,%d", $1, $3);
+        free($1); 
         $$ = str;
     }
     ;
@@ -631,7 +645,6 @@ declaration:
                 fprintf(out, "OUTI R%d 0x%04x\n",r, ad+i);
             }
         }
-        
         free($4);
     }
     | var_type_list ASSIGN STRING
@@ -645,20 +658,11 @@ declaration:
             fprintf(out, "OUTI R%d 0x%04x\n",r, ad+i);
         }
     }
-    | var_type_ptr ASSIGN BAND varname
-    {
-        int varindex = get_var_index($1,func_pipe);
-        int ad_ptr = vars[varindex].addr;
-        int ad_var = get_var_addr($4,0);
-        int r = new_tmp();
-        fprintf(out, "LOAD R%d 0x%04x ; %s <- &%s\n", r, ad_var, vars[varindex].name, $4);
-        fprintf(out, "OUTI R%d 0x%04x\n",r, ad_ptr);
-    }
     | var_type ASSIGN expression
     {
         int varindex = get_var_index($1,func_pipe);
         int ad = vars[varindex].addr;
-        fprintf(out, "OUTI R%d 0x%04x ; déclaration long %s addr=0x%04x\n", $3, ad, vars[varindex].name, ad);
+        fprintf(out, "OUTI R%d 0x%04x ; déclaration %s addr=0x%04x\n", $3, ad, vars[varindex].name, ad);
     }
     | var_type
     {
@@ -669,35 +673,36 @@ declaration:
     ;
 
 assignment:
-    varname ASSIGN BAND varname
+    varname ASSIGN expression
     {
         int tmp = get_reg_addr($1);
-        int r = new_tmp();
-        if (tmp != -1) {
-            yyerror("internal reg are not of type ptr");
-        } else {
-            int ad_ptr = get_var_addr($1,func_pipe);
-            int ad_var = get_var_addr($4,func_pipe);
-            fprintf(out, "LOAD R%d 0x%04x ; %s <- &%s\n", r, ad_var, $1, $4);
-            fprintf(out, "OUTI R%d 0x%04x", r, ad_ptr);
-        }
-        free($1);
-    }
-    | varname ASSIGN expression
-    {
-        int tmp = get_reg_addr($1);
-        int ad = get_var_addr($1,func_pipe);
         if (tmp != -1) {
             fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", $3, tmp, $1, $3);
         } else {
+            int ad = get_var_addr($1,func_pipe);
             fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", $3, ad, $1, $3);
         }
         free($1);
+    }
+    | MUL varname ASSIGN expression
+    {
+        int tmp = get_reg_addr($2);
+        int r = new_tmp();
+        if (tmp != -1) {
+            fprintf(out, "INI R%d 0x%04x ; *%s <- R%d\n", r, tmp, $2, $4);
+            fprintf(out, "OUT R%d R%d \n", $4,r );
+        } else {
+            int ad = get_var_addr($2,func_pipe);
+            fprintf(out, "INI R%d 0x%04x ; *%s <- R%d\n", r, ad, $2, $4);
+            fprintf(out, "OUT R%d R%d \n", $4,r );
+        }
+        free($2);
     }
     | varname op ASSIGN expression
     {
         int r = new_tmp();
         int r2 = new_tmp();
+        int r3 = new_tmp();
         int tmp = get_reg_addr($1);
         if (tmp != -1) {
             fprintf(out, "INI R%d 0x%04x ; %s -> R%d\n", r, tmp, $1, r);
@@ -706,10 +711,80 @@ assignment:
         }else{
             int ad = get_var_addr($1,func_pipe);
             fprintf(out, "INI R%d 0x%04x ; %s -> R%d\n", r, ad, $1, r);
+            if(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($1,func_pipe)==LONG_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_TYPE){
+                fprintf(out, "INI R%d 0x%04x\n", r2, ad+1);
+            }
             fprintf(out, "%s R%d R%d R%d\n",$2 , r, r, $4);
+
+            if(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($1,func_pipe)==LONG_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_TYPE){
+                int res_reg = next_tmp($4);
+                if(!strcmp($2,"ADD") || !strcmp($2,"SUB")){
+                    fprintf(out, "%sC R%d R%d R%d\n",$2 , r2, r2, res_reg);
+                }
+                if(!strcmp($2,"AND") || !strcmp($2,"OR") || !strcmp($2,"XOR"))fprintf(out, "%s R%d R%d R%d\n",$2 , r2, r2, res_reg);
+                if(!strcmp($2,"SHL")){
+                    fprintf(out, "SHL R%d R%d R%d\n", r2, r2, res_reg);
+                    fprintf(out, "SHR R%d R%d R%d\n", r3, r, res_reg);
+                    fprintf(out, "OR R%d R%d R%d\n", r2, r2, r3);
+                }
+                if(!strcmp($2,"SHR")){
+                    fprintf(out, "SHL R%d R%d R%d\n", r3, r2, res_reg);
+                    fprintf(out, "OR R%d R%d R%d\n", r, r, r3);
+                    fprintf(out, "SHR R%d R%d R%d\n", r2, r2, res_reg);
+                }
+            }
             fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", r, ad, $1, r);
+            if(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($1,func_pipe)==LONG_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_TYPE){
+                fprintf(out, "OUTI R%d 0x%04x\n", r2, ad+1);
+            }
         }
         free($1);
+    }
+    | MUL varname op ASSIGN expression
+    {
+        int r = new_tmp();
+        int r2 = new_tmp();
+        int r3 = new_tmp();
+        int tmp = get_reg_addr($2);
+        if (tmp != -1) {
+            fprintf(out, "INI R%d 0x%04x ; %s -> R%d\n", r, tmp, $2, r);
+            fprintf(out, "%s R%d R%d R%d\n",$3 , r, r, $5);
+            fprintf(out, "INI R%d 0x%04x ; *%s <- R%d\n", r2, tmp, $2, $5);
+            fprintf(out, "OUT R%d R%d \n", r, r2);
+
+        }else{
+            int ad = get_var_addr($2,func_pipe);
+            fprintf(out, "INI R%d 0x%04x ; %s -> R%d\n", r, ad, $2, r);
+            if(get_var_type($2,func_pipe)==LONG_PTR_TYPE || get_var_type($2,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($2,func_pipe)==LONG_TYPE || get_var_type($2,func_pipe)==UNSIGNED_LONG_TYPE){
+                fprintf(out, "INI R%d 0x%04x\n", r2, ad+1);
+            }
+            fprintf(out, "%s R%d R%d R%d\n",$3 , r, r, $5);
+
+            if(get_var_type($2,func_pipe)==LONG_PTR_TYPE || get_var_type($2,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($2,func_pipe)==LONG_TYPE || get_var_type($2,func_pipe)==UNSIGNED_LONG_TYPE){
+                int res_reg = next_tmp($5);
+                if(!strcmp($3,"ADD") || !strcmp($3,"SUB")){
+                    fprintf(out, "%sC R%d R%d R%d\n",$3 , r2, r2, res_reg);
+                }
+                if(!strcmp($3,"AND") || !strcmp($3,"OR") || !strcmp($3,"XOR"))fprintf(out, "%s R%d R%d R%d\n",$3 , r2, r2, res_reg);
+                if(!strcmp($3,"SHL")){
+                    fprintf(out, "SHL R%d R%d R%d\n", r2, r2, res_reg);
+                    fprintf(out, "SHR R%d R%d R%d\n", r3, r, res_reg);
+                    fprintf(out, "OR R%d R%d R%d\n", r2, r2, r3);
+                }
+                if(!strcmp($3,"SHR")){
+                    fprintf(out, "SHL R%d R%d R%d\n", r3, r2, res_reg);
+                    fprintf(out, "OR R%d R%d R%d\n", r, r, r3);
+                    fprintf(out, "SHR R%d R%d R%d\n" , r2, r2, res_reg);
+                }
+            }
+            fprintf(out, "INI R%d 0x%04x ; *%s <- R%d\n", r3, ad, $2, r);
+            fprintf(out, "OUT R%d R%d \n", r, r3);
+            if(get_var_type($2,func_pipe)==LONG_PTR_TYPE || get_var_type($2,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($2,func_pipe)==LONG_TYPE || get_var_type($2,func_pipe)==UNSIGNED_LONG_TYPE){
+                fprintf(out, "INI R%d 0x%04x ; *%s <- R%d\n", r3, ad+1, $2, r2);
+                fprintf(out, "OUT R%d R%d \n", r2, r3);
+            }
+        }
+        free($2);
     }
     | varname op ASSIGN NUMBER
     {
@@ -719,21 +794,79 @@ assignment:
         int tmp = get_reg_addr($1);
         if (tmp != -1) {
             fprintf(out, "INI R%d 0x%04x ; %s -> R%d\n", r, tmp, $1, r);
-            fprintf(out, "%sI R%d R%d %d\n",$2 , r, r, $4);
+            fprintf(out, "%sI R%d R%d %d\n",$2 , r, r, (unsigned short)$4);
             fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", r, tmp, $1, r); 
         } else {
             int ad = get_var_addr($1,func_pipe);
             fprintf(out, "INI R%d 0x%04x ; %s -> R%d\n", r, ad, $1, r);
             if(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($1,func_pipe)==LONG_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_TYPE)fprintf(out, "INI R%d 0x%04x\n", r2, ad+1);
-            fprintf(out, "%sI R%d R%d %d\n",$2 , r, r, $4);
+            fprintf(out, "%sI R%d R%d %d\n",$2 , r, r, (unsigned short)$4);
             if(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($1,func_pipe)==LONG_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_TYPE){
-                fprintf(out, "LOAD R%d %d\n",$2 , r3, $4);
-                fprintf(out, "%sC R%d R%d %d\n",$2 , r2, r2, r3);
+                
+                if(!strcmp($2,"ADD") || !strcmp($2,"SUB")){
+                    fprintf(out, "LOAD R%d %d\n",r3, (unsigned short)($4>>16));
+                    fprintf(out, "%sC R%d R%d R%d\n",$2 , r2, r2, r3);
+                }
+                if(!strcmp($2,"AND") || !strcmp($2,"OR") || !strcmp($2,"XOR"))fprintf(out, "%sI R%d R%d %d\n",$2 , r2, r2, (unsigned short)($4>>16));
+                if(!strcmp($2,"SHL")){
+                    fprintf(out, "SHLI R%d R%d %d\n",$2 , r2, r2, (unsigned short)($4));
+                    fprintf(out, "SHRI R%d R%d %d\n",$2 , r3, r, (unsigned short)(16-$4));
+                    fprintf(out, "OR R%d R%d R%d\n",$2 , r2, r2, r3);
+                }
+                if(!strcmp($2,"SHR")){
+                    fprintf(out, "SHLI R%d R%d %d\n",$2 , r3, r2, (unsigned short)(16-$4));
+                    fprintf(out, "OR R%d R%d R%d\n",$2 , r, r, r3);
+                    fprintf(out, "SHRI R%d R%d %d\n",$2 , r2, r2, (unsigned short)($4));
+                }
             }
             fprintf(out, "OUTI R%d 0x%04x ; %s <- R%d\n", r, ad, $1, r);
             if(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($1,func_pipe)==LONG_TYPE || get_var_type($1,func_pipe)==UNSIGNED_LONG_TYPE)fprintf(out, "OUTI R%d 0x%04x\n", r2, ad+1);
         }
         free($1);
+    }
+    | MUL varname op ASSIGN NUMBER
+    {
+        int r = new_tmp();
+        int r2 = new_tmp();
+        int r3 = new_tmp();
+        int tmp = get_reg_addr($2);
+        if (tmp != -1) {
+            fprintf(out, "INI R%d 0x%04x ; %s -> R%d\n", r, tmp, $2, r);
+            fprintf(out, "%sI R%d R%d %d\n",$3 , r, r, (unsigned short)$5);
+            fprintf(out, "INI R%d 0x%04x ; *%s <- R%d\n", r2, tmp, $2, r);
+            fprintf(out, "OUT R%d R%d \n", r, r2);
+        } else {
+            int ad = get_var_addr($2,func_pipe);
+            fprintf(out, "INI R%d 0x%04x ; %s -> R%d\n", r, ad, $2, r);
+            if(get_var_type($2,func_pipe)==LONG_PTR_TYPE || get_var_type($2,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($2,func_pipe)==LONG_TYPE || get_var_type($2,func_pipe)==UNSIGNED_LONG_TYPE)fprintf(out, "INI R%d 0x%04x\n", r2, ad+1);
+            fprintf(out, "%sI R%d R%d %d\n",$3 , r, r, (unsigned short)$5);
+            
+            if(get_var_type($2,func_pipe)==LONG_PTR_TYPE || get_var_type($2,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($2,func_pipe)==LONG_TYPE || get_var_type($2,func_pipe)==UNSIGNED_LONG_TYPE){
+                
+                if(!strcmp($3,"ADD") || !strcmp($3,"SUB")){
+                    fprintf(out, "LOAD R%d %d\n",r3, (unsigned short)($5>>16));
+                    fprintf(out, "%sC R%d R%d R%d\n",$3 , r2, r2, r3);
+                }
+                if(!strcmp($3,"AND") || !strcmp($3,"OR") || !strcmp($3,"XOR"))fprintf(out, "%sI R%d R%d %d\n",$3 , r2, r2, (unsigned short)($5>>16));
+                if(!strcmp($3,"SHL")){
+                    fprintf(out, "SHLI R%d R%d %d\n",$3 , r2, r2, (unsigned short)($5));
+                    fprintf(out, "SHRI R%d R%d %d\n",$3 , r3, r, (unsigned short)(16-$5));
+                    fprintf(out, "OR R%d R%d R%d\n",$3 , r2, r2, r3);
+                }
+                if(!strcmp($2,"SHR")){
+                    fprintf(out, "SHLI R%d R%d %d\n",$3 , r3, r2, (unsigned short)(16-$5));
+                    fprintf(out, "OR R%d R%d R%d\n",$3 , r, r, r3);
+                    fprintf(out, "SHRI R%d R%d %d\n",$3 , r2, r2, (unsigned short)($5));
+                }
+            }
+            fprintf(out, "INI R%d 0x%04x ; *%s <- R%d\n", r3, ad, $2, r);
+            fprintf(out, "OUT R%d R%d \n", r, r3);
+            if(get_var_type($2,func_pipe)==LONG_PTR_TYPE || get_var_type($2,func_pipe)==UNSIGNED_LONG_PTR_TYPE || get_var_type($2,func_pipe)==LONG_TYPE || get_var_type($2,func_pipe)==UNSIGNED_LONG_TYPE){
+                fprintf(out, "INI R%d 0x%04x ; *%s <- R%d\n", r3, ad+1, $2, r);
+                fprintf(out, "OUT R%d R%d \n", r2, r3);
+            }
+        }
+        free($2);
     }
     | varname PLUS PLUS
     {
@@ -771,7 +904,7 @@ assignment:
     }
     | varname LBRACKET NUMBER RBRACKET ASSIGN expression
     {
-        char *var_name;
+        char* var_name = malloc(strlen($1)+50);
         int tmp = get_reg_addr($1);
         if (tmp != -1) {
             sprintf(var_name," Register %s already exists with this name",$1);
@@ -779,9 +912,8 @@ assignment:
         }else {
             int ad = get_var_addr($1,func_pipe);
             if(ad>=ArgLoc && ad<=ArgLocMax){
-                int ad = get_var_addr($1,func_pipe);
                 int r = new_tmp();
-                fprintf(out, "INI R%d 0x%04x ; %s[%d] <- R%s\n", r, ad, $1, $3, $6);
+                fprintf(out, "INI R%d 0x%04x ; %s[%d] <- R%d\n", r, ad, $1, $3, $6);
                 fprintf(out, "ADDI R%d R%d %d\n", r, r, $3);
                 fprintf(out, "OUT R%d R%d\n", $6, r);
             }else{
@@ -802,7 +934,7 @@ assignment:
             int r = new_tmp();
             if(!(get_var_type($1,func_pipe)==LONG_PTR_TYPE || get_var_type($1,func_pipe)==SHORT_PTR_TYPE))yyerror("variable not of type ptr/array");
             if(ad>=ArgLoc && ad<=ArgLocMax){
-                fprintf(out, "INI R%d 0x%04x ; %s[%d] <- R%s\n", r, ad, $1, $3, $6);
+                fprintf(out, "INI R%d 0x%04x ; %s[%d] <- R%d\n", r, ad, $1, $3, $6);
                 fprintf(out, "ADD R%d R%d R%d\n", r, r, $3);
                 fprintf(out, "OUT R%d R%d\n", $6, r);
             }else{
@@ -956,6 +1088,16 @@ simple_expression :
         int ad = get_var_addr($2,func_pipe);
         fprintf(out, "LOAD R%d 0x%04x ; lecture &%s -> %d\n", r, ad, $2, r);
         $$ = r;
+        free($2);
+    }
+    | MUL varname
+    {
+        int r = new_tmp();
+        int r1 = new_tmp();
+        int ad = get_var_addr($2,func_pipe);
+        fprintf(out, "INI R%d 0x%04x ; lecture *%s -> %d\n", r, ad, $2, r);
+        fprintf(out, "IN R%d R%d \n",r1, r);
+        $$ = r1;
         free($2);
     }
     | MINUS NUMBER
@@ -1171,8 +1313,8 @@ int main(int argc, char *argv[]) {
     yyparse();
     printf("\nCompilation de %s terminée avec succes\n",argv[1]);
     printf("\nTaille de la Ram : %d/%d (%.2f%%) Half Words\n",var_count,VarSpace,((float)var_count*100/VarSpace));
-    fclose(yyin);
     fclose(out);
+    fclose(yyin);
     return 0;
 }
 

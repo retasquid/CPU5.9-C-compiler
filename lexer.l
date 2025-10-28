@@ -1,6 +1,6 @@
 %{
 #include "parser.tab.h"
-#include "str_process.h" 
+#include "str_process.h"
 #include <stdlib.h>
 #include <string.h>
 %}
@@ -8,8 +8,11 @@
 %%
 "void"       { return VOID; }
 "short"      { return SHORT; }
-"char"      { return CHAR; }
+"char"      { return SHORT; }
 "int"      { return SHORT; }
+"long"      { return LONG; }
+"signed"      { return SIGN; }
+"unsigned"      { return USIGN; }
 "return"     { return RETURN; }
 "if"         { return IF; }
 "else"       { return ELSE; }
@@ -60,7 +63,7 @@
 0[xX][0-9a-fA-F]+    { yylval.num = strtol(yytext, NULL, 16); return NUMBER; }
 0[bB][01]+           { yylval.num = strtol(yytext+2, NULL, 2); return NUMBER; }
 '.'                  { yylval.num = (int)yytext[1]; return NUMBER; }
-'\\[ntr0\\']'        {yylval.num = get_escape_char(yytext[2]); return NUMBER; }
+'\\[ntr0\\']'        {yylval.num = get_escape_char(&yytext[2]); return NUMBER; }
 [0-9]+               { yylval.num = atoi(yytext); return NUMBER; }
 [a-zA-Z_][a-zA-Z0-9_]* { yylval.str = strdup(yytext); return IDENT; }
 \"([^"\\]|\\.)*\"    { yylval.str = process_escapes(yytext+1, strlen(yytext)-2); return STRING; }
